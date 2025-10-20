@@ -32,7 +32,6 @@ void print_binary(int n) {
 int main() {
     //int input[N] = {0b0001, 0b1111, 0b0000, 0b0101};
     int input[N] = {1234, 5678, 9012, 3456, 7890, 2345, 6789, 1122, 3344, 5566};
-    int copyInput[N] = {1234, 5678, 9012, 3456, 7890, 2345, 6789, 1122, 3344, 5566};
     int output[N];
     int digits[N];
     int mask = 0xF;
@@ -82,7 +81,7 @@ int main() {
         for (int i = 0; i < N; i++) {
             int d = digits[i];
             int pos = offsets[d] + rank[d]++;
-            output[pos] = copyInput[i];
+            output[pos] = input[i];
         }
 
         printf("d) Scatter (output): ");
@@ -99,7 +98,6 @@ int main() {
 
         for (int i = 0; i < N; i++) {
             input[i] = output[i];
-            copyInput[i] = output[i];
         }
     }
 
