@@ -4,14 +4,15 @@
 #include <math.h>
 #include <cuda_runtime.h>
 
+#define GPU_RUNS 300
+#define ELEMENTS_PER_THREAD 10
+#define NUM_BITS 4
+#define H 16
+
 #include "pbb_kernels.cuh"
 #include "helper.h"
 #include "kernels.cuh"
 
-#define GPU_RUNS 300
-#define ELEMENTS_PER_THREAD 10
-#define NUM_BITS 4
-#define H 1 << 4
 
 // WRONG CODE, COPIED FROM ASSIGNMENT 1
 int main(int argc, char** argv) {
@@ -54,9 +55,11 @@ int main(int argc, char** argv) {
     
     // initialize the memory
     srand(time(NULL));
+    printf("Input: (N):\n")
     for(unsigned int i=0; i<N; ++i) {
         // h_in[i] = (uint32_t)rand() % 1024; // values between 0 and 1023
         h_in[i] = i; 
+        printf("%u ", h_in[i]);
     }
 
     // allocate device memory
@@ -70,10 +73,10 @@ int main(int argc, char** argv) {
     cudaMemset(d_hist, 0, hist_size);
     
     // a small number of dry runs
-    // for(int r = 0; r < 1; r++) {
-    //     dim3 block(B, 1, 1), grid(numblocks, 1, 1);
-    //     histogramKer<<< grid, block>>>(d_in, d_hist, mask, Q, N);
-    // }
+    for(int r = 0; r < 1; r++) {
+        dim3 block(B, 1, 1), grid(numblocks, 1, 1);
+        histogramKer<<< grid, block>>>(d_in, d_hist, mask, Q, N);
+    }
 
     {
 
@@ -94,7 +97,7 @@ int main(int argc, char** argv) {
         // for(int r = 0; r < 1; r++) {
         histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, Q, N);
         cudaDeviceSynchronize();
-        mask = mask << BITS;
+        mask = mask << NUM_BITS;
         // }
     }
         
@@ -125,13 +128,15 @@ int main(int argc, char** argv) {
 
 
 
-// Pizza:             Pepsi:`
-//---------------------------------------
-//    __________           
-//  // ^   .  O \\           _____
-// ||..   O      ||         /_____\ 
-// || O    . ^   ||         |     |
-// ||   ^    . O ||         |Pepsi|
-// ||.   ^  O    ||         |_____|
-//  \\__________//          \_____/
-//``````````````````````````````````````
+/**
+ Pizza:             Pepsi:`
+ ---------------------------------------
+     __________           
+   // ^   .  O \\           _____
+   ||..   O      ||         /_____\ 
+   || O    . ^   ||         |     |
+   ||   ^    . O ||         |Pepsi|
+   ||.   ^  O    ||         |_____|
+    \\__________//          \_____/
+ ````````````````````````````````````````
+ */

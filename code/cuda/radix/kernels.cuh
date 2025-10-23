@@ -48,8 +48,7 @@ __global__ void histogramKer(uint32_t* input
   // If at some point H becomes large, consider changing this to be parallel
   if (threadIdx.x == 0) { //  First Thread of the Block
     for (int i = 0; i < H; i++) {
-      histogram[i] = i;
-      // histogram[i + blockIdx.x * H] = tid; 
+      histogram[i + blockIdx.x * H] = sh_hist[i]; 
     }
   }
 }
