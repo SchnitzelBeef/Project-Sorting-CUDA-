@@ -6,7 +6,7 @@
 
 #define GPU_RUNS 300
 #define ELEMENTS_PER_THREAD 10
-#define NUM_BITS 4
+#define NUM_BITS 2
 #define H (1 << NUM_BITS)
 
 #include "host_skel.cuh"
@@ -89,24 +89,28 @@ int main(int argc, char** argv) {
     cudaSetDevice(0);
     
     uint32_t Q = 1;
-    unsigned int B = 16;
+    unsigned int B = 4;
     unsigned int numblocks = (N + (Q * B - 1)) / (Q * B);
-    printf("Num blocks: %d \n", numblocks);
+    printf("Pred. N: %d \n", N);
+    printf("Pred. Q: %d \n", Q);
+    printf("Pred. b: %d \n", NUM_BITS);
+    printf("Num blocks: ceil(N / QB) = %d \n", numblocks);
+    printf("H (RADIX): 2 ** b = %d \n", H);
     unsigned int mask = (1 << NUM_BITS) - 1; // 4 bits = 0xF for radix 16
 
     uint32_t mem_size = N * sizeof(uint32_t);
-    uint32_t hist_size = numblocks * H * sizeof(uint32_t);
+    uint32_t hist_mem_size = numblocks * H * sizeof(uint32_t);
     printf("Mem size: %d: ", mem_size);
-    printf("Hist size: %d: ", hist_size);
+    printf("Hist size: %d: ", hist_mem_size);
 
     // allocate host memory for both CPU and GPU
     uint32_t* h_in  = (uint32_t*) malloc(mem_size);
-    uint32_t* gpu_res = (uint32_t*) malloc(hist_size);
+    uint32_t* gpu_res = (uint32_t*) malloc(hist_mem_size);
     
     
     // initialize the memory
     srand(time(NULL));
-    printf("Input: (N):\n");
+    printf("Input:\n");
     for(unsigned int i=0; i<N; ++i) {
         h_in[i] = (uint32_t)rand() % N; // values between 0 and N 
         binaryPrinter(h_in[i], NUM_BITS);
@@ -118,12 +122,12 @@ int main(int argc, char** argv) {
     uint32_t* d_hist;
     uint32_t* d_hist_buffer;
     cudaMalloc((void**)&d_in,  mem_size);
-    cudaMalloc((void**)&d_hist, hist_size);
-    cudaMalloc((void**)&d_hist_buffer, hist_size);
+    cudaMalloc((void**)&d_hist, hist_mem_size);
+    cudaMalloc((void**)&d_hist_buffer, hist_mem_size);
 
     // copy host memory to device
     cudaMemcpy(d_in, h_in, mem_size, cudaMemcpyHostToDevice);
-    cudaMemset(d_hist, 0, hist_size);
+    cudaMemset(d_hist, 0, hist_mem_size);
     
     // a small number of dry runs
     for(int r = 0; r < 1; r++) {
@@ -156,6 +160,7 @@ int main(int argc, char** argv) {
         cudaDeviceSynchronize();
         callTransposeKer<32>(d_hist, d_hist_buffer, H, numblocks);
         cudaDeviceSynchronize();
+
         mask = mask << NUM_BITS;
         // }
     }
@@ -164,13 +169,14 @@ int main(int argc, char** argv) {
     gpuAssert( cudaPeekAtLastError() );
 
     // copy result from device to host
-    cudaMemcpy(gpu_res, d_hist_buffer, hist_size, cudaMemcpyDeviceToHost);
+    cudaMemcpy(gpu_res, d_hist_buffer, hist_mem_size, cudaMemcpyDeviceToHost);
     
     // element-wise compare of CPU and GPU execution
-   for (int b = 0; b < numblocks; b++) {
-    printf("\nBlock %d histogram:\n", b);
-    for (int i = 0; i < H; i++)
-        printf("%u ", gpu_res[b * H + i]);
+    printf("\n-- Scan over each histogram -- ");
+    for (int b = 0; b < numblocks; b++) {
+        printf("\nBlock %d histogram:\n", b);
+        for (int i = 0; i < H; i++)
+            printf("%u ", gpu_res[b * H + i]);
     }
 
     printf("\nReached the end! ^_^ \n");
