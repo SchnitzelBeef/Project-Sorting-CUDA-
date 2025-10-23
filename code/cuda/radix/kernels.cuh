@@ -1,14 +1,11 @@
 #include "pbb_kernels.cuh"
 
-#define NUM_BITS 4
-
 // To be implemented
 __global__ void histogramKer(uint32_t* input
                             , uint32_t* histogram // Global set of histograms
                             , uint32_t mask
                             , uint32_t Q
                             , uint32_t N
-                            , uint32_t H
 
 ) {
 

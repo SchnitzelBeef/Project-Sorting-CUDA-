@@ -10,7 +10,8 @@
 
 #define GPU_RUNS 300
 #define ELEMENTS_PER_THREAD 10
-#define BITS 4 
+#define NUM_BITS 4
+#define H 1 << 4
 
 // WRONG CODE, COPIED FROM ASSIGNMENT 1
 int main(int argc, char** argv) {
@@ -35,7 +36,6 @@ int main(int argc, char** argv) {
     // use the first CUDA device:
     cudaSetDevice(0);
     
-    uint32_t H = 1 << 4;
     uint32_t Q = 1;
     unsigned int B = 16;
     unsigned int numblocks = (N + (Q * B - 1)) / (Q * B);
@@ -43,7 +43,7 @@ int main(int argc, char** argv) {
     unsigned int mask = 0xF; // 4 bits for radix 16
 
     uint32_t mem_size = N * sizeof(uint32_t);
-    uint32_t hist_size = numblocks * RADIX * sizeof(uint32_t);
+    uint32_t hist_size = numblocks * H * sizeof(uint32_t);
     printf("Mem size: %d: ", mem_size);
     printf("Hist size: %d: ", hist_size);
 
@@ -92,7 +92,7 @@ int main(int argc, char** argv) {
         // Does NOT touch shared or register memory (that’s only inside kernels)
 
         // for(int r = 0; r < 1; r++) {
-        histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, Q, N, H);
+        histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, Q, N);
         cudaDeviceSynchronize();
         mask = mask << BITS;
         // }
