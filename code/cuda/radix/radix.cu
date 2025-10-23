@@ -66,6 +66,8 @@ void callTransposeKer( uint32_t*          inp_d,
 
 int main(int argc, char** argv) {
     uint32_t N;
+
+    initHwd();
     
     { // reading the number of elements 
         if (argc != 2) { 
