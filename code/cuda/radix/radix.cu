@@ -91,7 +91,6 @@ int main(int argc, char** argv) {
     uint32_t Q = 1;
     unsigned int B = 4;
     unsigned int numblocks = (N + (Q * B - 1)) / (Q * B);
-    printf("Pred. N: %d \n", N);
     printf("Pred. Q: %d \n", Q);
     printf("Pred. B: %d \n", B);
     printf("Pred. b: %d \n", NUM_BITS);
@@ -111,7 +110,7 @@ int main(int argc, char** argv) {
     
     // initialize the memory
     srand(time(NULL));
-    printf("Input:\n");
+    printf("\nInput:\n");
     for(unsigned int i=0; i<N; ++i) {
         h_in[i] = (uint32_t)rand() % N; // values between 0 and N 
         binaryPrinter(h_in[i], NUM_BITS);
