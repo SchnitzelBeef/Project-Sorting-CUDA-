@@ -52,7 +52,7 @@ int main(int argc, char** argv) {
     unsigned int B = 16;
     unsigned int numblocks = (N + (Q * B - 1)) / (Q * B);
     printf("Num blocks: %d \n", numblocks);
-    unsigned int mask = 1 << NUM_BITS - 1 // 4 bits = 0xF for radix 16
+    unsigned int mask = 1 << NUM_BITS - 1; // 4 bits = 0xF for radix 16
 
     uint32_t mem_size = N * sizeof(uint32_t);
     uint32_t hist_size = numblocks * H * sizeof(uint32_t);
@@ -69,8 +69,7 @@ int main(int argc, char** argv) {
     printf("Input: (N):\n");
     for(unsigned int i=0; i<N; ++i) {
         h_in[i] = (uint32_t)rand() % N; // values between 0 and N 
-        
-        decimalPrinter(h_in[i], NUM_BITS);
+        binaryPrinter(h_in[i], NUM_BITS);
         printf(", ");
     }
 
