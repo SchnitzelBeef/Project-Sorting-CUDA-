@@ -9,7 +9,7 @@
 #define NUM_BITS 4
 #define H (1 << NUM_BITS)
 
-#include "pbb_kernels.cuh"
+#include "host_skel.cuh"
 #include "helper.h"
 #include "kernels.cuh"
 
@@ -25,7 +25,53 @@ void binaryPrinter(int val, unsigned int decimal_points) {
     }
 }
 
-// WRONG CODE, COPIED FROM ASSIGNMENT 1
+// Modified From assignment 2:
+void scanIncAddI32( const uint32_t B     // desired CUDA block size ( <= 1024, multiple of 32)
+                 , const size_t   N     // length of the input array
+                 , uint32_t* d_in            // device input  of size: N * sizeof(uint32_t)
+                 , uint32_t* d_out           // device result of size: N * sizeof(uint32_t)
+) {
+    const size_t mem_size = N * sizeof(uint32_t);
+    uint32_t* d_tmp;
+    uint32_t* h_ref = (uint32_t*)malloc(mem_size);
+    cudaMalloc((void**)&d_tmp, MAX_BLOCK*sizeof(uint32_t));
+    cudaMemset(d_out, 0, N*sizeof(uint32_t));
+
+
+    scanInc<Add<uint32_t>> ( B, N, d_out, d_in, d_tmp );
+    
+    // cudaDeviceSynchronize();
+
+    // cudaMemcpy(h_out, d_out, mem_size, cudaMemcpyDeviceToHost);
+
+    free(h_ref);
+    cudaFree(d_tmp);
+}
+
+// Modified from assignment 3-4:
+/**
+ * Input:
+ *   inp_d : [height][width]uint32_t
+ * Result:
+ *   out_d : [width][height]uint32_t
+ *   (the transpose of inp_d.)
+ */
+template<int T>
+void callTransposeKer( uint32_t*          inp_d,  
+                       uint32_t*          out_d, 
+                       const uint32_t height, 
+                       const uint32_t width
+) {
+    // 1. setup block and grid parameters
+    int  dimy = (height+T-1) / T; 
+    int  dimx = (width +T-1) / T;
+    dim3 block(T, T, 1);
+    dim3 grid (dimx, dimy, 1);
+
+    //2. execute the kernel
+    coalsTransposeKer<T> <<< grid, block >>>(inp_d, out_d, height, width);
+}
+
 int main(int argc, char** argv) {
     uint32_t N;
     
@@ -76,8 +122,10 @@ int main(int argc, char** argv) {
     // allocate device memory
     uint32_t* d_in;
     uint32_t* d_hist;
+    uint32_t* d_hist_buffer;
     cudaMalloc((void**)&d_in,  mem_size);
     cudaMalloc((void**)&d_hist, hist_size);
+    cudaMalloc((void**)&d_hist_buffer, hist_size);
 
     // copy host memory to device
     cudaMemcpy(d_in, h_in, mem_size, cudaMemcpyHostToDevice);
@@ -108,6 +156,12 @@ int main(int argc, char** argv) {
         // for(int r = 0; r < 1; r++) {
         histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, Q, N);
         cudaDeviceSynchronize();
+        callTransposeKer<32>(d_hist, d_hist_buffer, numblocks, H); //Maybe use other B value here
+        cudaDeviceSynchronize();
+        scanIncAddI32(B, numblocks * H, d_hist_buffer, d_hist);
+        cudaDeviceSynchronize();
+        callTransposeKer<32>(d_hist, d_hist_buffer, numblocks, H);
+        cudaDeviceSynchronize();
         mask = mask << NUM_BITS;
         // }
     }
@@ -116,7 +170,7 @@ int main(int argc, char** argv) {
     gpuAssert( cudaPeekAtLastError() );
 
     // copy result from device to host
-    cudaMemcpy(gpu_res, d_hist, hist_size, cudaMemcpyDeviceToHost);
+    cudaMemcpy(gpu_res, d_hist_buffer, hist_size, cudaMemcpyDeviceToHost);
 
     // print result
     // for(unsigned int i=0; i<N; ++i) printf("GPU at %d: %.6f\n", i, gpu_res[i]);

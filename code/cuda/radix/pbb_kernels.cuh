@@ -158,25 +158,7 @@ class Mssp {
  * `idx` is the local thread index within a cuda block (threadIdx.x)
  * Each thread returns the corresponding scanned element of type
  *   `typename OP::RedElTp`
- ********************************
- * Weekly Assignment 2, Task 2: *
- ********************************
- *   The provided dummy implementation works correctly, but it is
- *     very slow because the warp reduction is performed sequentially
- *     by the first thread of each warp, so it takes WARP-1=31 steps
- *     to complete, while the other 31 threads of the WARP are iddle.
- *   Your task is to write a warp-level scan implementation in which
- *     the threads in the same WARP cooperate such that the depth of
- *     this implementation is 5 steps ( WARP==32, and lg(32)=5 ).
- *     The algorithm that you need to implement is shown in the
- *     slides of Lab2.
- *   The implementation does not need any synchronization, i.e.,
- *     please do NOT use "__syncthreads();" and the like in here,
- *     especially because it will break the whole thing (because
- *     this function is conditionally called sometimes, so not
- *     all threads will reach the barrier, resulting in incorrect
- *     results.)
- */
+*/
 template<class OP>
 __device__ inline typename OP::RedElTp
 scanIncWarp( volatile typename OP::RedElTp* ptr, const uint32_t idx ) {
@@ -198,11 +180,6 @@ scanIncWarp( volatile typename OP::RedElTp* ptr, const uint32_t idx ) {
  * Each thread returns the corresponding scanned element of type
  *   `typename OP::RedElTp`. Note that this is NOT published to shared memory!
  *
- *******************************************************
- * Weekly Assignment 2, Task 3:
- *******************************************************
- * Find and fix the bug (race condition) that manifests
- *  only when the CUDA block size is set to 1024.
  */
 template<class OP>
 __device__ inline typename OP::RedElTp
