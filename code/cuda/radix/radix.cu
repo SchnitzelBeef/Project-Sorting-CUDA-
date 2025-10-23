@@ -26,25 +26,17 @@ void binaryPrinter(int val, unsigned int decimal_points) {
 }
 
 // Modified From assignment 2:
-void scanIncAddI32( const uint32_t B     // desired CUDA block size ( <= 1024, multiple of 32)
+void scanIncAddI32(const uint32_t B     // desired CUDA block size ( <= 1024, multiple of 32)
                  , const size_t   N     // length of the input array
                  , uint32_t* d_in            // device input  of size: N * sizeof(uint32_t)
                  , uint32_t* d_out           // device result of size: N * sizeof(uint32_t)
 ) {
-    const size_t mem_size = N * sizeof(uint32_t);
     uint32_t* d_tmp;
-    uint32_t* h_ref = (uint32_t*)malloc(mem_size);
     cudaMalloc((void**)&d_tmp, MAX_BLOCK*sizeof(uint32_t));
     cudaMemset(d_out, 0, N*sizeof(uint32_t));
 
-
     scanInc<Add<uint32_t>> ( B, N, d_out, d_in, d_tmp );
-    
-    // cudaDeviceSynchronize();
 
-    // cudaMemcpy(h_out, d_out, mem_size, cudaMemcpyDeviceToHost);
-
-    free(h_ref);
     cudaFree(d_tmp);
 }
 
@@ -160,7 +152,7 @@ int main(int argc, char** argv) {
         cudaDeviceSynchronize();
         scanIncAddI32(B, numblocks * H, d_hist_buffer, d_hist);
         cudaDeviceSynchronize();
-        callTransposeKer<32>(d_hist, d_hist_buffer, numblocks, H);
+        callTransposeKer<32>(d_hist, d_hist_buffer, H, numblocks);
         cudaDeviceSynchronize();
         mask = mask << NUM_BITS;
         // }
@@ -171,11 +163,7 @@ int main(int argc, char** argv) {
 
     // copy result from device to host
     cudaMemcpy(gpu_res, d_hist_buffer, hist_size, cudaMemcpyDeviceToHost);
-
-    // print result
-    // for(unsigned int i=0; i<N; ++i) printf("GPU at %d: %.6f\n", i, gpu_res[i]);
-    // for(unsigned int i=0; i<N; ++i) printf("CPU at %d: %.6f\n", i, cpu_res[i]);
-
+    
     // element-wise compare of CPU and GPU execution
    for (int b = 0; b < numblocks; b++) {
     printf("\nBlock %d histogram:\n", b);
@@ -188,6 +176,7 @@ int main(int argc, char** argv) {
     // clean-up memory
     free(h_in);       free(gpu_res); 
     cudaFree(d_in);   cudaFree(d_hist);
+    cudaFree(d_hist_buffer);
 }
 
 
@@ -195,8 +184,8 @@ int main(int argc, char** argv) {
 /**
  Pizza:             Pepsi:`
  ---------------------------------------
-     __________           
-   // ^   .  O \\           _____
+      __________           
+    // ^   .  O \\           ___;_
    ||..   O      ||         /_____\ 
    || O    . ^   ||         |     |
    ||   ^    . O ||         |Pepsi|
