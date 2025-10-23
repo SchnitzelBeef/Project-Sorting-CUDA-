@@ -7,7 +7,7 @@
 #define GPU_RUNS 300
 #define ELEMENTS_PER_THREAD 10
 #define NUM_BITS 4
-#define H 16
+#define H (1 << NUM_BITS)
 
 #include "pbb_kernels.cuh"
 #include "helper.h"
