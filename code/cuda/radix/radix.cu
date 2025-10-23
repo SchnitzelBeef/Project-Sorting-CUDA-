@@ -10,37 +10,39 @@
 
 #define GPU_RUNS 300
 #define ELEMENTS_PER_THREAD 10
- 
+#define BITS 4 
+
 // WRONG CODE, COPIED FROM ASSIGNMENT 1
 int main(int argc, char** argv) {
     uint32_t N;
     
     { // reading the number of elements 
-      if (argc != 2) { 
-        printf("Num Args is: %d instead of 1. Exiting!\n", argc); 
-        exit(1);
-      }
-
-      N = (uint32_t)atoi(argv[1]);
-      printf("N is: %d\n", N);
-
-      const uint32_t maxN = 500000000;
-      if(N > maxN) {
-          printf("N is too big; maximal value is %d. Exiting!\n", maxN);
-          exit(2);
-      }
+        if (argc != 2) { 
+            printf("Num Args is: %d instead of 1. Exiting!\n", argc); 
+            exit(1);
+        }
+        
+        N = (uint32_t)atoi(argv[1]);
+        printf("N is: %d\n", N);
+        
+        const uint32_t maxN = 500000000;
+        if(N > maxN) {
+            printf("N is too big; maximal value is %d. Exiting!\n", maxN);
+            exit(2);
+        }
     }
-
+    
     // use the first CUDA device:
     cudaSetDevice(0);
-
+    
+    uint32_t H = 1 << 4;
     uint32_t Q = 1;
-    unsigned int B = 64;
+    unsigned int B = 16;
     unsigned int numblocks = (N + (Q * B - 1)) / (Q * B);
     printf("Num blocks: %d \n", numblocks);
     unsigned int mask = 0xF; // 4 bits for radix 16
 
-    uint32_t mem_size = N*sizeof(uint32_t);
+    uint32_t mem_size = N * sizeof(uint32_t);
     uint32_t hist_size = numblocks * RADIX * sizeof(uint32_t);
     printf("Mem size: %d: ", mem_size);
     printf("Hist size: %d: ", hist_size);
@@ -54,7 +56,7 @@ int main(int argc, char** argv) {
     srand(time(NULL));
     for(unsigned int i=0; i<N; ++i) {
         // h_in[i] = (uint32_t)rand() % 1024; // values between 0 and 1023
-        h_in[i] = 8; 
+        h_in[i] = i; 
     }
 
     // allocate device memory
@@ -68,14 +70,12 @@ int main(int argc, char** argv) {
     cudaMemset(d_hist, 0, hist_size);
     
     // a small number of dry runs
-    for(int r = 0; r < 1; r++) {
-        dim3 block(B, 1, 1), grid(numblocks, 1, 1);
-        histogramKer<<< grid, block>>>(d_in, d_hist, mask, Q, N);
-    }
+    // for(int r = 0; r < 1; r++) {
+    //     dim3 block(B, 1, 1), grid(numblocks, 1, 1);
+    //     histogramKer<<< grid, block>>>(d_in, d_hist, mask, Q, N);
+    // }
 
     {
-        double gpu_elapsed; double gpu_gigabytespersec; struct timeval t_start, t_end, t_diff;
-        gettimeofday(&t_start, NULL);
 
 
         //The cpu does the following:
@@ -91,11 +91,11 @@ int main(int argc, char** argv) {
         // Performs small global memory resets (e.g. cudaMemset)
         // Does NOT touch shared or register memory (that’s only inside kernels)
 
-        for(int r = 0; r < 1; r++) {
-            histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, Q, N);
-            cudaDeviceSynchronize();
-            mask = mask << 4;
-        }
+        // for(int r = 0; r < 1; r++) {
+        histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, Q, N, H);
+        cudaDeviceSynchronize();
+        mask = mask << BITS;
+        // }
     }
         
     // check for errors
@@ -111,10 +111,10 @@ int main(int argc, char** argv) {
     // element-wise compare of CPU and GPU execution
    for (int b = 0; b < numblocks; b++) {
     printf("Block %d histogram:\n", b);
-    for (int i = 0; i < RADIX; i++)
-        printf("%u ", gpu_res[b * RADIX + i]);
+    for (int i = 0; i < H; i++)
+        printf("%u ", gpu_res[b * H + i]);
     printf("\n");
-}
+    }
 
     printf("Reached the end! ^_^ \n");
 
@@ -125,11 +125,13 @@ int main(int argc, char** argv) {
 
 
 
-// Pizza:                   Pepsi:
-//   ____________            
-//  /  ^   .  O  \           _____
-// | ..   O       |         /_____\ 
-// |  O    . ^    |         |     |
-// |    ^    . O  |         |     |
-// | .   ^  O     |         |_____|
-//  \____________/          \_____/
+// Pizza:             Pepsi:`
+//---------------------------------------
+//    __________           
+//  // ^   .  O \\           _____
+// ||..   O      ||         /_____\ 
+// || O    . ^   ||         |     |
+// ||   ^    . O ||         |Pepsi|
+// ||.   ^  O    ||         |_____|
+//  \\__________//          \_____/
+//``````````````````````````````````````
