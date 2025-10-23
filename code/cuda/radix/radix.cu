@@ -13,6 +13,17 @@
 #include "helper.h"
 #include "kernels.cuh"
 
+// *Very* beautiful binary printer:
+void binaryPrinter(int val, unsigned int decimal_points) {
+    for (int i = decimal_points-1; i >= 0; i--) {
+        if (val & (1 << i)) {
+            printf("1");
+        }
+        else {
+            printf("0");
+        }
+    }
+}
 
 // WRONG CODE, COPIED FROM ASSIGNMENT 1
 int main(int argc, char** argv) {
@@ -41,7 +52,7 @@ int main(int argc, char** argv) {
     unsigned int B = 16;
     unsigned int numblocks = (N + (Q * B - 1)) / (Q * B);
     printf("Num blocks: %d \n", numblocks);
-    unsigned int mask = 0xF; // 4 bits for radix 16
+    unsigned int mask = 1 << NUM_BITS - 1 // 4 bits = 0xF for radix 16
 
     uint32_t mem_size = N * sizeof(uint32_t);
     uint32_t hist_size = numblocks * H * sizeof(uint32_t);
@@ -57,9 +68,10 @@ int main(int argc, char** argv) {
     srand(time(NULL));
     printf("Input: (N):\n");
     for(unsigned int i=0; i<N; ++i) {
-        // h_in[i] = (uint32_t)rand() % 1024; // values between 0 and 1023
-        h_in[i] = i; 
-        printf("%u ", h_in[i]);
+        h_in[i] = (uint32_t)rand() % N; // values between 0 and N 
+        
+        decimalPrinter(h_in[i], NUM_BITS);
+        printf(", ");
     }
 
     // allocate device memory
@@ -113,13 +125,12 @@ int main(int argc, char** argv) {
 
     // element-wise compare of CPU and GPU execution
    for (int b = 0; b < numblocks; b++) {
-    printf("Block %d histogram:\n", b);
+    printf("\nBlock %d histogram:\n", b);
     for (int i = 0; i < H; i++)
         printf("%u ", gpu_res[b * H + i]);
-    printf("\n");
     }
 
-    printf("Reached the end! ^_^ \n");
+    printf("\nReached the end! ^_^ \n");
 
     // clean-up memory
     free(h_in);       free(gpu_res); 
