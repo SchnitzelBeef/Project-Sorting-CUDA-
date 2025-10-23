@@ -55,7 +55,7 @@ int main(int argc, char** argv) {
     
     // initialize the memory
     srand(time(NULL));
-    printf("Input: (N):\n")
+    printf("Input: (N):\n");
     for(unsigned int i=0; i<N; ++i) {
         // h_in[i] = (uint32_t)rand() % 1024; // values between 0 and 1023
         h_in[i] = i; 
