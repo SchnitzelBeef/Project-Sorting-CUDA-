@@ -2,6 +2,7 @@
 #define PBB_KERNELS
 
 #include <cuda_runtime.h>
+#include "constants.cuh"
 
 /**
  * Naive memcpy kernel, for the purpose of comparing with
@@ -405,27 +406,7 @@ redCommuKernel( typename OP::RedElTp* d_tmp
  *   in global memory, but making sure that consecutive threads
  *   read consecutive elements of `d_inp` in a SIMD instruction.
  *
- ********************************
- * Weekly Assignment 2, Task 1: *
- ********************************
- * The current implementations of functions `copyFromGlb2ShrMem`
- *   and `copyFromShr2GlbMem` are broken because they feature
- *   (very) uncoalesced access to global memory arrays `d_inp`
- *   and `d_out` (see above). For example, `d_inp[glb_ind]`
- *   can be expanded to `d_inp[glb_offs + threadIdx.x*CHUNK + i]`,
- *   where `threadIdx.x` denotes the local thread-id in the
- *   current block. Assuming `T` is 32-bit int, it follows that
- *   two consecutive threads are going to access in the same SIMD
- *   instruction memory locations that are CHUNK words appart
- *   (`i` being the same for both threads since they execute in
- *   lockstep).
- *  Your task is to rewrite in both functions the line
- *      `uint32_t loc_ind = threadIdx.x*CHUNK + i;`
- *    such that the result is the same---i.e., the same elements
- *    are ultimately placed at the same position---but with the
- *    new formula for computing `loc_ind`, two consecutive threads
- *    will access consecutive memory words in the same SIMD instruction.
- */
+**/
 template<class T, uint32_t CHUNK>
 __device__ inline void
 copyFromGlb2ShrMem( const uint32_t glb_offs

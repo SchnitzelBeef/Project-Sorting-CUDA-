@@ -4,19 +4,16 @@
 #include <math.h>
 #include <cuda_runtime.h>
 
+#include "pbb_kernels.cuh"
 #include "helper.h"
+#include "kernels.cuh"
 
 #define GPU_RUNS 300
+#define ELEMENTS_PER_THREAD 10
  
-__global__ void mul2Kernel(float* X, float *Y, int N) {
-    const unsigned int gid_x = blockIdx.x * blockDim.x + threadIdx.x;
-    const unsigned int gid_y = gid_x + N;
-    if (gid_x < N) Y[gid_x] = X[gid_x] * X[gid_y];
-}
-
 // WRONG CODE, COPIED FROM ASSIGNMENT 1
 int main(int argc, char** argv) {
-    unsigned int N;
+    uint32_t N;
     
     { // reading the number of elements 
       if (argc != 2) { 
@@ -24,10 +21,10 @@ int main(int argc, char** argv) {
         exit(1);
       }
 
-      N = atoi(argv[1]);
+      N = (uint32_t)atoi(argv[1]);
       printf("N is: %d\n", N);
 
-      const unsigned int maxN = 500000000;
+      const uint32_t maxN = 500000000;
       if(N > maxN) {
           printf("N is too big; maximal value is %d. Exiting!\n", maxN);
           exit(2);
@@ -37,94 +34,102 @@ int main(int argc, char** argv) {
     // use the first CUDA device:
     cudaSetDevice(0);
 
-    unsigned int mem_size = N*sizeof(float);
-    unsigned int gpu_mem_size_in = mem_size*2;
+    uint32_t Q = 1;
+    unsigned int B = 64;
+    unsigned int numblocks = (N + (Q * B - 1)) / (Q * B);
+    printf("Num blocks: %d \n", numblocks);
+    unsigned int mask = 0xF; // 4 bits for radix 16
+
+    uint32_t mem_size = N*sizeof(uint32_t);
+    uint32_t hist_size = numblocks * RADIX * sizeof(uint32_t);
+    printf("Mem size: %d: ", mem_size);
+    printf("Hist size: %d: ", hist_size);
 
     // allocate host memory for both CPU and GPU
-    float* h_in  = (float*) malloc(gpu_mem_size_in);
-    float* gpu_res = (float*) malloc(mem_size);
-    float* cpu_res = (float*) malloc(mem_size);
-
+    uint32_t* h_in  = (uint32_t*) malloc(mem_size);
+    uint32_t* gpu_res = (uint32_t*) malloc(hist_size);
+    
+    
     // initialize the memory
+    srand(time(NULL));
     for(unsigned int i=0; i<N; ++i) {
-        h_in[i] = (float)i;
-        h_in[N+i] = (float)(i+2);
+        // h_in[i] = (uint32_t)rand() % 1024; // values between 0 and 1023
+        h_in[i] = 8; 
     }
-
-    // sequential map on CPU with time measured
-    double cpu_elapsed; double cpu_gigabytespersec; struct timeval t_start, t_end, t_diff;
-    gettimeofday(&t_start, NULL);
-
-    for (unsigned int i = 0; i < N; i++){
-        cpu_res[i] = h_in[i] * h_in[i+N];
-    }
-
-    gettimeofday(&t_end, NULL);
-    timeval_subtract(&t_diff, &t_end, &t_start);
-    cpu_elapsed = (1.0 * (t_diff.tv_sec*1e6+t_diff.tv_usec));
-    cpu_gigabytespersec = (2.0 * N * 4.0) / (cpu_elapsed * 1000.0);
-    printf("The cpu took on average %f microseconds. GB/sec: %f \n", cpu_elapsed, cpu_gigabytespersec);
 
     // allocate device memory
-    float* d_in;
-    float* d_out;
-    cudaMalloc((void**)&d_in,  gpu_mem_size_in);
-    cudaMalloc((void**)&d_out, mem_size);
+    uint32_t* d_in;
+    uint32_t* d_hist;
+    cudaMalloc((void**)&d_in,  mem_size);
+    cudaMalloc((void**)&d_hist, hist_size);
 
     // copy host memory to device
-    cudaMemcpy(d_in, h_in, gpu_mem_size_in, cudaMemcpyHostToDevice);
-
-    unsigned int B = 256;
-    unsigned int numblocks = (N + B - 1) / B;
+    cudaMemcpy(d_in, h_in, mem_size, cudaMemcpyHostToDevice);
+    cudaMemset(d_hist, 0, hist_size);
+    
     // a small number of dry runs
     for(int r = 0; r < 1; r++) {
         dim3 block(B, 1, 1), grid(numblocks, 1, 1);
-        mul2Kernel<<< grid, block>>>(d_in, d_out, N);
+        histogramKer<<< grid, block>>>(d_in, d_hist, mask, Q, N);
     }
 
     {
         double gpu_elapsed; double gpu_gigabytespersec; struct timeval t_start, t_end, t_diff;
         gettimeofday(&t_start, NULL);
 
-        for(int r = 0; r < GPU_RUNS; r++) {
-            dim3 block(B, 1, 1), grid(numblocks, 1, 1);
-            mul2Kernel<<< grid, block>>>(d_in, d_out, N);
+
+        //The cpu does the following:
+        //Holds the outer loop over passes (for pass in [0..num_passes))
+        // Calculates mask and shift for each bit group
+        // Launches the three GPU kernels per pass (histogram → scan → scatter) 
+        // Swaps input/output pointers between passes
+
+        //Allocates global memory buffers on device:
+        // d_in, d_out for the arrays being sorted
+        // d_histograms (size = numBlocks × H)
+        // d_prefixes (prefix sums of histograms)
+        // Performs small global memory resets (e.g. cudaMemset)
+        // Does NOT touch shared or register memory (that’s only inside kernels)
+
+        for(int r = 0; r < 1; r++) {
+            histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, Q, N);
+            cudaDeviceSynchronize();
+            mask = mask << 4;
         }
-        cudaDeviceSynchronize();
-        
-        gettimeofday(&t_end, NULL);
-        timeval_subtract(&t_diff, &t_end, &t_start);
-        gpu_elapsed = (1.0 * (t_diff.tv_sec*1e6+t_diff.tv_usec)) / GPU_RUNS;
-        gpu_gigabytespersec = (3.0 * N * 4.0) / (gpu_elapsed * 1000.0);
-        printf("The kernel took on average %f microseconds. GB/sec: %f \n", gpu_elapsed, gpu_gigabytespersec);
-    
-        double speedup = cpu_elapsed / gpu_elapsed;
-        printf("Speedup := cpu_elapsed / gpu_elapsed  = %f \n", speedup);
     }
         
     // check for errors
     gpuAssert( cudaPeekAtLastError() );
 
     // copy result from device to host
-    cudaMemcpy(gpu_res, d_out, mem_size, cudaMemcpyDeviceToHost);
+    cudaMemcpy(gpu_res, d_hist, hist_size, cudaMemcpyDeviceToHost);
 
     // print result
     // for(unsigned int i=0; i<N; ++i) printf("GPU at %d: %.6f\n", i, gpu_res[i]);
     // for(unsigned int i=0; i<N; ++i) printf("CPU at %d: %.6f\n", i, cpu_res[i]);
 
     // element-wise compare of CPU and GPU execution
-    for (unsigned int i = 0; i < N; i++) {
-        float expected = cpu_res[i];
-        float actual = gpu_res[i];
-        if (fabs(actual - expected >= 0.000001)) {
-            printf("Invalid result at index %d, actual: %f, expected: %f. \n", i, actual, expected);
-            exit(3);
-        }
-    }
+   for (int b = 0; b < numblocks; b++) {
+    printf("Block %d histogram:\n", b);
+    for (int i = 0; i < RADIX; i++)
+        printf("%u ", gpu_res[b * RADIX + i]);
+    printf("\n");
+}
 
-    printf("Successful Validation.\n");
+    printf("Reached the end! ^_^ \n");
 
     // clean-up memory
-    free(h_in);       free(gpu_res);
-    cudaFree(d_in);   cudaFree(d_out);
+    free(h_in);       free(gpu_res); 
+    cudaFree(d_in);   cudaFree(d_hist);
 }
+
+
+
+// Pizza:                   Pepsi:
+//   ____________            
+//  /  ^   .  O  \           _____
+// | ..   O       |         /_____\ 
+// |  O    . ^    |         |     |
+// |    ^    . O  |         |     |
+// | .   ^  O     |         |_____|
+//  \____________/          \_____/
