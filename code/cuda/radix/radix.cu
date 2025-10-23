@@ -93,6 +93,7 @@ int main(int argc, char** argv) {
     unsigned int numblocks = (N + (Q * B - 1)) / (Q * B);
     printf("Pred. N: %d \n", N);
     printf("Pred. Q: %d \n", Q);
+    printf("Pred. B: %d \n", B);
     printf("Pred. b: %d \n", NUM_BITS);
     printf("Num blocks: ceil(N / QB) = %d \n", numblocks);
     printf("H (RADIX): 2 ** b = %d \n", H);
@@ -172,7 +173,7 @@ int main(int argc, char** argv) {
     cudaMemcpy(gpu_res, d_hist_buffer, hist_mem_size, cudaMemcpyDeviceToHost);
     
     // element-wise compare of CPU and GPU execution
-    printf("\n-- Scan over each histogram -- ");
+    printf("\n\n-- Scan over each histogram -- ");
     for (int b = 0; b < numblocks; b++) {
         printf("\nBlock %d histogram:\n", b);
         for (int i = 0; i < H; i++)
