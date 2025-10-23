@@ -173,7 +173,7 @@ int main(int argc, char** argv) {
     cudaMemcpy(gpu_res, d_hist_buffer, hist_mem_size, cudaMemcpyDeviceToHost);
     
     // element-wise compare of CPU and GPU execution
-    printf("\n\n-- Scan over each histogram -- ");
+    printf("\n\n-- Scan over each histogram in transposed manner(?) -- ");
     for (int b = 0; b < numblocks; b++) {
         printf("\nBlock %d histogram:\n", b);
         for (int i = 0; i < H; i++)

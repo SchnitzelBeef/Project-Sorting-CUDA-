@@ -17,7 +17,7 @@ $(EXECUTABLE): $(SRC)
 
 
 run: $(EXECUTABLE)
-	./$(EXECUTABLE) 16
+	./$(EXECUTABLE) 8
 
 clean:
 	rm -f $(EXECUTABLE)
