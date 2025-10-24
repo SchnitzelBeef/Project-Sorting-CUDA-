@@ -89,19 +89,34 @@ shiftKer(uint32_t* input
   }
 }
 
-// // Bad implementation of third kernel
-// __global__ void scatterKer(uint32_t* input
-//                             , uint32_t* hist 
-//                             , uint32_t* hist_scan 
-//                             , uint32_t* out
-//                             , uint32_t Q
-//                             , uint32_t B
-//                             , uint32_t N
-// ) {
+// Bad implementation of third kernel
+__global__ void scatterKer(uint32_t* input
+                            , uint32_t* histogram 
+                            , uint32_t* histogram_scan 
+                            , uint32_t* output
+                            , uint32_t Q
+                            , uint32_t B
+                            , uint32_t N
+) {
+  
+  // Shared rank buffer:
+  __shared__ uint32_t rank[H];
+  if (threadIdx.x == 0) {  
+    for (int i = 0; i < H; i ++) {
+      rank[i] = 0;
+    }
+  }
 
-//   // __shared__ uint32_t sh_hist[Q*B];
+  __syncthreads();
+  // Global thread ID
+  int tid = threadIdx.x + blockIdx.x * blockDim.x;
 
-
-
-
-// }
+  for (uint32_t i = 0; i < Q; i ++) {
+    uint32_t idx = tid * Q + i;
+    if (idx < N) {
+      uint32_t val = input[idx];
+      int index = histogram_scan[blockIdx.x * H + val] + rank[val]++;
+      output[index] = val;  
+    }
+  }
+}

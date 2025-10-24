@@ -119,10 +119,12 @@ int main(int argc, char** argv) {
 
     // allocate device memory
     uint32_t* d_in;
+    uint32_t* d_out;
     uint32_t* d_hist;
     uint32_t* d_hist_scan;
     uint32_t* d_tmp; //REMOVE ME later (only used for shifting)
     cudaMalloc((void**)&d_in,  mem_size);
+    cudaMalloc((void**)&d_out, mem_size);
     cudaMalloc((void**)&d_hist, hist_mem_size);
     cudaMalloc((void**)&d_hist_scan, hist_mem_size);
     cudaMalloc((void**)&d_tmp, hist_mem_size);
@@ -156,16 +158,22 @@ int main(int argc, char** argv) {
         // for(int r = 0; r < 1; r++) {
         histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, Q, N);
         cudaDeviceSynchronize();
+        
         callTransposeKer<32>(d_hist, d_hist, numblocks, H); //Maybe use other B value here
         cudaDeviceSynchronize();
 
-        // d_hist_scan is used as a temporary buffer to make d_hist ready for simulated exclusive scan:
+        // d_tmp is used as a temporary buffer to make d_hist ready for simulated exclusive scan
+        // Should be removed
         shiftKer<<<numblocks, B>>>(d_hist, d_tmp, N);
         cudaDeviceSynchronize();
         
         scanIncAddI32(B, numblocks * H, d_tmp, d_hist_scan);
         cudaDeviceSynchronize();
+
         callTransposeKer<32>(d_hist_scan, d_hist_scan, H, numblocks);
+        cudaDeviceSynchronize();
+
+        scatterKer<<<numblocks, B>>>(d_in, d_hist, d_hist_scan, d_out, Q, B, N);
         cudaDeviceSynchronize();
 
 
@@ -180,15 +188,25 @@ int main(int argc, char** argv) {
     cudaMemcpy(gpu_res, d_hist, hist_mem_size, cudaMemcpyDeviceToHost);
 
     // element-wise compare of CPU and GPU execution
-    printf("\n\n-- Original histogram -- ");
+    printf("\n\n-- Original histogram (transposed) -- ");
+    for (int b = 0; b < H; b++) {
+        printf("\n");
+        for (int i = 0; i < numblocks; i++)
+            printf("%u ", gpu_res[b * numblocks + i]);
+    }
+
+    cudaMemcpy(gpu_res, d_hist_scan, hist_mem_size, cudaMemcpyDeviceToHost);
+    
+    // element-wise compare of CPU and GPU execution
+    printf("\n\n-- Scanned histogram -- ");
     for (int b = 0; b < numblocks; b++) {
         printf("\n");
         for (int i = 0; i < H; i++)
             printf("%u ", gpu_res[b * H + i]);
     }
 
-    cudaMemcpy(gpu_res, d_hist_scan, hist_mem_size, cudaMemcpyDeviceToHost);
-    
+    cudaMemcpy(gpu_res, d_tmp, hist_mem_size, cudaMemcpyDeviceToHost);
+
     // element-wise compare of CPU and GPU execution
     printf("\n\n-- Scanned histogram -- ");
     for (int b = 0; b < numblocks; b++) {
