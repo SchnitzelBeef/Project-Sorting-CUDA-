@@ -178,8 +178,8 @@ int main(int argc, char** argv) {
 
         callTransposeKer<32>(d_hist_scan, d_hist_scan, H, numblocks);
         cudaDeviceSynchronize();
-
-        scatterKer<<<numblocks, B>>>(d_in, d_hist, d_hist_scan, d_out, Q, B, N);
+		
+        scatterKer<<<numblocks, B>>>(d_in,d_hist_scan, d_out, Q, N, mask);
         cudaDeviceSynchronize();
 
 

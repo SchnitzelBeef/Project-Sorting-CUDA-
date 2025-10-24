@@ -89,34 +89,39 @@ shiftKer(uint32_t* input
   }
 }
 
-// Bad implementation of third kernel
-__global__ void scatterKer(uint32_t* input
-                            , uint32_t* histogram 
-                            , uint32_t* histogram_scan 
-                            , uint32_t* output
-                            , uint32_t Q
-                            , uint32_t B
-                            , uint32_t N
-) {
-  
-  // Shared rank buffer:
-  __shared__ uint32_t rank[H];
-  if (threadIdx.x == 0) {  
-    for (int i = 0; i < H; i ++) {
-      rank[i] = 0;
-    }
-  }
+// Better version of Scatter Ker
+__global__ void scatterKer(uint32_t* input,
+                           uint32_t* histogram_scan,
+                           uint32_t* output,
+                           uint32_t Q,
+                           uint32_t N,
+                           uint32_t mask) {
+    // Shared memory buffer
+    __shared__ uint32_t rank[H];
 
-  __syncthreads();
-  // Global thread ID
-  int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    // Global thread ID
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
 
-  for (uint32_t i = 0; i < Q; i ++) {
-    uint32_t idx = tid * Q + i;
-    if (idx < N) {
-      uint32_t val = input[idx];
-      int index = histogram_scan[blockIdx.x * H + val] + rank[val]++;
-      output[index] = val;  
+    // Zero shared ranks cooperatively (first H threads do it)
+    if (threadIdx.x == 0) {
+        for (int i = 0; i < H; i++) {
+            rank[i] = 0;
+        }
     }
-  }
+    __syncthreads();  // Sync after init
+
+    // Loop over elements assigned to this thread
+    for (uint32_t i = 0; i < Q; i++) {
+        uint32_t idx = tid * Q + i;
+        if (idx >= N) break;
+
+        // (d) SCATTER: place each number into correct position
+        uint32_t elem = input[idx];
+        int d = (int)(elem & mask);
+        uint32_t rank_before = atomicAdd(&rank[d], 1u);
+        int pos = histogram_scan[blockIdx.x * H + d] + rank_before;
+        output[pos] = elem;
+    }
+
+    __syncthreads();
 }
