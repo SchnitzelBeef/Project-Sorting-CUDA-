@@ -112,8 +112,11 @@ int main(int argc, char** argv) {
     // initialize the memory
     srand(time(NULL));
     printf("\nInput:\n");
+    h_in[0] = 1;
+    binaryPrinter(h_in[0], NUM_BITS);
+    printf(", ");
     for(unsigned int i=0; i<N; ++i) {
-        h_in[i] = (uint32_t)rand() % N; // values between 0 and N 
+        h_in[i] = (uint32_t)(h_in[i-1] * 3.15) % N; // (uint32_t)rand() % N; // values between 0 and N 
         binaryPrinter(h_in[i], NUM_BITS);
         printf(", ");
     }
@@ -132,13 +135,15 @@ int main(int argc, char** argv) {
 
     // copy host memory to device
     cudaMemcpy(d_in, h_in, mem_size, cudaMemcpyHostToDevice);
+    cudaMemset(d_out, 0, mem_size);
     cudaMemset(d_hist, 0, hist_mem_size);
+    cudaMemset(d_hist_scan, 0, hist_mem_size);
     
     // a small number of dry runs
-    for(int r = 0; r < 1; r++) {
-        dim3 block(B, 1, 1), grid(numblocks, 1, 1);
-        histogramKer<<< grid, block>>>(d_in, d_hist, mask, Q, N);
-    }
+    // for(int r = 0; r < 1; r++) {
+    //     dim3 block(B, 1, 1), grid(numblocks, 1, 1);
+    //     histogramKer<<< grid, block>>>(d_in, d_hist, mask, Q, N);
+    // }
 
     {
 
