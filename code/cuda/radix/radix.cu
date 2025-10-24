@@ -115,8 +115,8 @@ int main(int argc, char** argv) {
     h_in[0] = 1;
     binaryPrinter(h_in[0], NUM_BITS);
     printf(", ");
-    for(unsigned int i=0; i<N; ++i) {
-        h_in[i] = (uint32_t)(h_in[i-1] * 3.15) % N; // (uint32_t)rand() % N; // values between 0 and N 
+    for(unsigned int i=1; i<N; ++i) {
+        h_in[i] = (uint32_t)(h_in[i-1] * i * i + i) % H; // (uint32_t)rand() % N; // values between 0 and N 
         binaryPrinter(h_in[i], NUM_BITS);
         printf(", ");
     }
