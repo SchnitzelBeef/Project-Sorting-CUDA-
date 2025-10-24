@@ -105,7 +105,8 @@ int main(int argc, char** argv) {
 
     // allocate host memory for both CPU and GPU
     uint32_t* h_in  = (uint32_t*) malloc(mem_size);
-    uint32_t* gpu_res = (uint32_t*) malloc(hist_mem_size);
+    uint32_t* h_out = (uint32_t*) malloc(mem_size);
+    uint32_t* gpu_res = (uint32_t*) malloc(hist_mem_size); // This can be removed later
     
     
     // initialize the memory
@@ -205,21 +206,23 @@ int main(int argc, char** argv) {
             printf("%u ", gpu_res[b * H + i]);
     }
 
-    cudaMemcpy(gpu_res, d_tmp, hist_mem_size, cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_out, d_out, mem_size, cudaMemcpyDeviceToHost);
 
     // element-wise compare of CPU and GPU execution
-    printf("\n\n-- Scanned histogram -- ");
-    for (int b = 0; b < numblocks; b++) {
-        printf("\n");
-        for (int i = 0; i < H; i++)
-            printf("%u ", gpu_res[b * H + i]);
-    }
+    printf("\n\n-- Result -- ");
+    for (int i = 0; i < N; i++) 
+        printf("%d ", h_out[i]);
+    
 
     printf("\nReached the end! ^_^ \n");
 
     // clean-up memory
-    free(h_in);       free(gpu_res); 
-    cudaFree(d_in);   cudaFree(d_hist);
+    free(h_in);
+    free(h_out);
+    free(gpu_res); 
+    cudaFree(d_in);
+    cudaFree(d_out);
+    cudaFree(d_hist);
     cudaFree(d_hist_scan);
 }
 
