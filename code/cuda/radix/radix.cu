@@ -5,7 +5,7 @@
 #include <cuda_runtime.h>
 #include <cub/cub.cuh>
 
-#define GPU_RUNS 300
+#define GPU_RUNS 10
 #define ELEMENTS_PER_THREAD 10
 #define NUM_BITS 2
 #define H (1 << NUM_BITS)
@@ -14,7 +14,7 @@
 #include "helper.h"
 #include "kernels.cuh"
 
-void cubRadixSort(uint32_t* d_in, uint32_t* d_out, size_t N);
+void cubRadixSort(uint32_t* d_in, uint32_t* d_out, size_t N, timeval& t_start, timeval& t_end);
 
 // *Very* beautiful binary printer:
 void binaryPrinter(int val, unsigned int decimal_points) {
@@ -89,7 +89,7 @@ int main(int argc, char** argv) {
     }
     
     // use the first CUDA device:
-    cudaSetDevice(0);
+    cudaSetDevice(1);
     
     uint32_t Q = 1;
     unsigned int B = 4;
@@ -153,8 +153,15 @@ int main(int argc, char** argv) {
     cudaMemset(d_out_ref, 0, mem_size);
 
     // running Cub radix sort for reference
-    cubRadixSort(d_in_ref, d_out_ref, N);
-    cudaDeviceSynchronize();
+    struct timeval t_start, t_end, t_diff;
+    uint64_t elapsed_cub = 0.0;
+    for (int i = 0; i < GPU_RUNS; i++) {
+        cubRadixSort(d_in_ref, d_out_ref, N, t_start, t_end);
+        timeval_subtract(&t_diff, &t_end, &t_start);
+        elapsed_cub += (t_diff.tv_sec*1e6+t_diff.tv_usec);
+    }
+    elapsed_cub /= GPU_RUNS;
+    printf("\nCUB Radix Sort Time: %lu microseconds\n", elapsed_cub);
     
     // a small number of dry runs
     // for(int r = 0; r < 1; r++) {
@@ -162,9 +169,10 @@ int main(int argc, char** argv) {
     //     histogramKer<<< grid, block>>>(d_in, d_hist, mask, Q, N);
     // }
 
-    {
-
-
+    // TODO: Could not make it run for multiple passes and VALIDATE
+    uint64_t elapsed_cuda = 0.0;
+    for (int i = 0; i < 1; i++) {
+        gettimeofday(&t_start, NULL);
         //The cpu does the following:
         //Holds the outer loop over passes (for pass in [0..num_passes))
         // Calculates mask and shift for each bit group
@@ -202,7 +210,11 @@ int main(int argc, char** argv) {
 
         mask = mask << NUM_BITS;
         // }
+        gettimeofday(&t_end, NULL);
     }
+    timeval_subtract(&t_diff, &t_end, &t_start);
+    elapsed_cuda = (t_diff.tv_sec*1e6+t_diff.tv_usec);
+    printf("\nCUDA Radix Sort Time: %lu microseconds\n", elapsed_cuda);
         
     // check for errors
     gpuAssert( cudaPeekAtLastError() );
@@ -272,7 +284,7 @@ int main(int argc, char** argv) {
 // Taken from CUB library examples
 // https://nvidia.github.io/cccl/cub/api/structcub_1_1DeviceRadixSort.html
 
-void cubRadixSort(uint32_t* d_in, uint32_t* d_out, size_t N) {
+void cubRadixSort(uint32_t* d_in, uint32_t* d_out, size_t N, timeval& t_start, timeval& t_end) {
     //temporary storage
     void     *d_temp_storage = NULL;
     size_t   temp_storage_bytes = 0;
@@ -280,7 +292,10 @@ void cubRadixSort(uint32_t* d_in, uint32_t* d_out, size_t N) {
     cudaMalloc(&d_temp_storage, temp_storage_bytes);
 
     // sorting operation
+    gettimeofday(&t_start, NULL);
     cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, d_in, d_out, N);
+    cudaDeviceSynchronize();
+    gettimeofday(&t_end, NULL);
 
     cudaFree(d_temp_storage);
 }
