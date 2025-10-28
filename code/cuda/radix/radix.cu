@@ -3,6 +3,7 @@
 #include <string.h>
 #include <math.h>
 #include <cuda_runtime.h>
+#include <cub/cub.cuh>
 
 #define GPU_RUNS 300
 #define ELEMENTS_PER_THREAD 10
@@ -12,6 +13,8 @@
 #include "host_skel.cuh"
 #include "helper.h"
 #include "kernels.cuh"
+
+void cubRadixSort(uint32_t* d_in, uint32_t* d_out, size_t N);
 
 // *Very* beautiful binary printer:
 void binaryPrinter(int val, unsigned int decimal_points) {
@@ -107,16 +110,20 @@ int main(int argc, char** argv) {
     uint32_t* h_in  = (uint32_t*) malloc(mem_size);
     uint32_t* h_out = (uint32_t*) malloc(mem_size);
     uint32_t* gpu_res = (uint32_t*) malloc(hist_mem_size); // This can be removed later
+    uint32_t* h_in_ref = (uint32_t*) malloc(mem_size);
+    uint32_t* h_out_ref = (uint32_t*) malloc(mem_size);
     
     
     // initialize the memory
     srand(time(NULL));
     printf("\nInput:\n");
+    h_in_ref[0] = 1;
     h_in[0] = 1;
     binaryPrinter(h_in[0], NUM_BITS);
     printf(", ");
     for(unsigned int i=1; i<N; ++i) {
         h_in[i] = (uint32_t)(h_in[i-1] * i * i + i) % H; // (uint32_t)rand() % N; // values between 0 and N 
+        h_in_ref[i] = (uint32_t)(h_in_ref[i-1] * i * i + i) % H;
         binaryPrinter(h_in[i], NUM_BITS);
         printf(", ");
     }
@@ -127,17 +134,27 @@ int main(int argc, char** argv) {
     uint32_t* d_hist;
     uint32_t* d_hist_scan;
     uint32_t* d_tmp; //REMOVE ME later (only used for shifting)
+    uint32_t* d_in_ref;
+    uint32_t* d_out_ref;
     cudaMalloc((void**)&d_in,  mem_size);
     cudaMalloc((void**)&d_out, mem_size);
     cudaMalloc((void**)&d_hist, hist_mem_size);
     cudaMalloc((void**)&d_hist_scan, hist_mem_size);
     cudaMalloc((void**)&d_tmp, hist_mem_size);
+    cudaMalloc((void**)&d_in_ref,  mem_size);
+    cudaMalloc((void**)&d_out_ref, mem_size);
 
     // copy host memory to device
     cudaMemcpy(d_in, h_in, mem_size, cudaMemcpyHostToDevice);
     cudaMemset(d_out, 0, mem_size);
     cudaMemset(d_hist, 0, hist_mem_size);
     cudaMemset(d_hist_scan, 0, hist_mem_size);
+    cudaMemcpy(d_in_ref, h_in_ref, mem_size, cudaMemcpyHostToDevice);
+    cudaMemset(d_out_ref, 0, mem_size);
+
+    // running Cub radix sort for reference
+    cubRadixSort(d_in_ref, d_out_ref, N);
+    cudaDeviceSynchronize();
     
     // a small number of dry runs
     // for(int r = 0; r < 1; r++) {
@@ -217,6 +234,22 @@ int main(int argc, char** argv) {
     printf("\n\n-- Result -- ");
     for (int i = 0; i < N; i++) 
         printf("%d ", h_out[i]);
+
+    // Verify correctness against Cub result
+    cudaMemcpy(h_out_ref, d_out_ref, mem_size, cudaMemcpyDeviceToHost);
+    bool validated = true;
+    for (int i = 0; i < N; i++) {
+        if (h_out[i] != h_out_ref[i]) {
+            validated = false;
+            break;
+        }
+    }
+    if (validated) {
+        printf("\nVALIDATED: Result matches CUB result\n");
+    } else {
+        printf("\nDID NOT VALIDATE: Result dont match CUB result!\n");
+    }
+        
     
 
     printf("\nReached the end! ^_^ \n");
@@ -225,12 +258,32 @@ int main(int argc, char** argv) {
     free(h_in);
     free(h_out);
     free(gpu_res); 
+    free(h_in_ref);
+    free(h_out_ref);
     cudaFree(d_in);
     cudaFree(d_out);
     cudaFree(d_hist);
     cudaFree(d_hist_scan);
+    cudaFree(d_tmp);
+    cudaFree(d_in_ref);
+    cudaFree(d_out_ref);
 }
 
+// Taken from CUB library examples
+// https://nvidia.github.io/cccl/cub/api/structcub_1_1DeviceRadixSort.html
+
+void cubRadixSort(uint32_t* d_in, uint32_t* d_out, size_t N) {
+    //temporary storage
+    void     *d_temp_storage = NULL;
+    size_t   temp_storage_bytes = 0;
+    cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, d_in, d_out, N);
+    cudaMalloc(&d_temp_storage, temp_storage_bytes);
+
+    // sorting operation
+    cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, d_in, d_out, N);
+
+    cudaFree(d_temp_storage);
+}
 
 
 /**
