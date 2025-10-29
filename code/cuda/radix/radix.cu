@@ -99,7 +99,6 @@ int main(int argc, char** argv) {
     printf("Pred. b: %d \n", NUM_BITS);
     printf("Num blocks: ceil(N / QB) = %d \n", numblocks);
     printf("H (RADIX): 2 ** b = %d \n", H);
-    unsigned int mask = (1 << NUM_BITS) - 1; // 4 bits = 0xF for radix 16
 
     uint32_t mem_size = N * sizeof(uint32_t);
     uint32_t hist_mem_size = numblocks * H * sizeof(uint32_t);
@@ -161,60 +160,74 @@ int main(int argc, char** argv) {
         elapsed_cub += (t_diff.tv_sec*1e6+t_diff.tv_usec);
     }
     elapsed_cub /= GPU_RUNS;
-    printf("\nCUB Radix Sort Time: %lu microseconds\n", elapsed_cub);
     
     // a small number of dry runs
     // for(int r = 0; r < 1; r++) {
     //     dim3 block(B, 1, 1), grid(numblocks, 1, 1);
     //     histogramKer<<< grid, block>>>(d_in, d_hist, mask, Q, N);
     // }
+    const int W = sizeof(int) * 8; 
+    const int num_passes = (W + NUM_BITS - 1) / NUM_BITS;
+    unsigned int mask;
 
     // TODO: Could not make it run for multiple passes and VALIDATE
     uint64_t elapsed_cuda = 0.0;
-    for (int i = 0; i < 1; i++) {
+    for (int i = 0; i < GPU_RUNS; i++) {
+        cudaMemcpy(d_in, h_in, mem_size, cudaMemcpyHostToDevice);
+        cudaMemset(d_out, 0, mem_size);
+        cudaMemset(d_hist, 0, hist_mem_size);
+        cudaMemset(d_hist_scan, 0, hist_mem_size);
+        mask = (1 << NUM_BITS) - 1; // 4 bits = 0xF for radix 16
+
         gettimeofday(&t_start, NULL);
-        //The cpu does the following:
-        //Holds the outer loop over passes (for pass in [0..num_passes))
-        // Calculates mask and shift for each bit group
-        // Launches the three GPU kernels per pass (histogram → scan → scatter) 
-        // Swaps input/output pointers between passes
+        for (int r = 0; r < num_passes; r++) {
+            //The cpu does the following:
+            //Holds the outer loop over passes (for pass in [0..num_passes))
+            // Calculates mask and shift for each bit group
+            // Launches the three GPU kernels per pass (histogram → scan → scatter) 
+            // Swaps input/output pointers between passes
 
-        //Allocates global memory buffers on device:
-        // d_in, d_out for the arrays being sorted
-        // d_histograms (size = numBlocks × H)
-        // d_prefixes (prefix sums of histograms)
-        // Performs small global memory resets (e.g. cudaMemset)
-        // Does NOT touch shared or register memory (that’s only inside kernels)
+            //Allocates global memory buffers on device:
+            // d_in, d_out for the arrays being sorted
+            // d_histograms (size = numBlocks × H)
+            // d_prefixes (prefix sums of histograms)
+            // Performs small global memory resets (e.g. cudaMemset)
+            // Does NOT touch shared or register memory (that’s only inside kernels)
 
-        // for(int r = 0; r < 1; r++) {
-        histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, Q, N);
-        cudaDeviceSynchronize();
-        
-        callTransposeKer<32>(d_hist, d_hist, numblocks, H); //Maybe use other B value here
-        cudaDeviceSynchronize();
+            // for(int r = 0; r < 1; r++) {
+            histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, Q, N);
+            cudaDeviceSynchronize();
+            
+            callTransposeKer<32>(d_hist, d_hist, numblocks, H); //Maybe use other B value here
+            cudaDeviceSynchronize();
 
-        // d_tmp is used as a temporary buffer to make d_hist ready for simulated exclusive scan
-        // Should be removed
-        shiftKer<<<numblocks, B>>>(d_hist, d_tmp, N);
-        cudaDeviceSynchronize();
-        
-        scanIncAddI32(B, numblocks * H, d_tmp, d_hist_scan);
-        cudaDeviceSynchronize();
+            // d_tmp is used as a temporary buffer to make d_hist ready for simulated exclusive scan
+            // Should be removed
+            shiftKer<<<numblocks, B>>>(d_hist, d_tmp, N);
+            cudaDeviceSynchronize();
+            
+            scanIncAddI32(B, numblocks * H, d_tmp, d_hist_scan);
+            cudaDeviceSynchronize();
 
-        callTransposeKer<32>(d_hist_scan, d_hist_scan, H, numblocks);
-        cudaDeviceSynchronize();
-		
-        scatterKer<<<numblocks, B>>>(d_in,d_hist_scan, d_out, Q, N, mask);
-        cudaDeviceSynchronize();
+            callTransposeKer<32>(d_hist_scan, d_hist_scan, H, numblocks);
+            cudaDeviceSynchronize();
+            
+            scatterKer<<<numblocks, B>>>(d_in,d_hist_scan, d_out, Q, N, mask);
+            cudaDeviceSynchronize();
 
+            // swap input and output arrays
+            uint32_t* temp = d_in;
+            d_in = d_out;
+            d_out = temp;
 
-        mask = mask << NUM_BITS;
-        // }
+            mask = mask << NUM_BITS;
+        }
         gettimeofday(&t_end, NULL);
+        timeval_subtract(&t_diff, &t_end, &t_start);
+        elapsed_cuda += (t_diff.tv_sec*1e6+t_diff.tv_usec);
     }
-    timeval_subtract(&t_diff, &t_end, &t_start);
-    elapsed_cuda = (t_diff.tv_sec*1e6+t_diff.tv_usec);
-    printf("\nCUDA Radix Sort Time: %lu microseconds\n", elapsed_cuda);
+    elapsed_cuda /= GPU_RUNS;
+    
         
     // check for errors
     gpuAssert( cudaPeekAtLastError() );
@@ -261,11 +274,10 @@ int main(int argc, char** argv) {
     } else {
         printf("\nDID NOT VALIDATE: Result dont match CUB result!\n");
     }
-        
+
+    printf("\nCUB Radix Sort Time: %lu microseconds\n", elapsed_cub);
+    printf("\nCUDA Radix Sort Time: %lu microseconds\n", elapsed_cuda);
     
-
-    printf("\nReached the end! ^_^ \n");
-
     // clean-up memory
     free(h_in);
     free(h_out);
