@@ -18,11 +18,9 @@ histogramKer(uint32_t* input
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
 
   // Zeroing shared histogram
- if (threadIdx.x == 0) {  
-  for (int i = 0; i < H; i ++) {
+  for (int i = threadIdx.x; i < H; i += blockDim.x) {
     sh_hist[i] = 0;
   }
- }
   __syncthreads();
 
 
@@ -105,11 +103,10 @@ __global__ void scatterKer(uint32_t* input,
     int tid = threadIdx.x + blockIdx.x * blockDim.x;
 
     // Zero shared ranks cooperatively (first H threads do it)
-    if (threadIdx.x == 0) {
-        for (int i = 0; i < H; i++) {
-            rank[i] = 0;
-        }
+    for (int i = threadIdx.x; i < H; i += blockDim.x) {
+      rank[i] = 0;
     }
+
     __syncthreads();  // Sync after init
 
     // Loop over elements assigned to this thread
@@ -124,6 +121,4 @@ __global__ void scatterKer(uint32_t* input,
         int pos = histogram_scan[blockIdx.x * H + d] + rank_before;
         output[pos] = elem;
     }
-
-    __syncthreads();
 }
