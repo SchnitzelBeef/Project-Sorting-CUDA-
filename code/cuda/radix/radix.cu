@@ -7,7 +7,7 @@
 
 #define GPU_RUNS 500
 #define ELEMENTS_PER_THREAD 10
-#define NUM_BITS 4
+#define NUM_BITS 2
 #define H (1 << NUM_BITS)
 
 #include "host_skel.cuh"
@@ -121,7 +121,11 @@ int main(int argc, char** argv) {
     binaryPrinter(h_in[0], NUM_BITS);
     printf(", ");
     for(unsigned int i=1; i<N; ++i) {
-        h_in[i] = rand();
+        // Chaining 4 rands to get 32-bit integer.
+        h_in[i] = (rand() & 0xFF)
+                | ((rand() & 0xFF) << 8)
+                | ((rand() & 0xFF) << 16)
+                | ((rand() & 0xFF) << 24); 
         h_in_ref[i] = h_in[i];
         binaryPrinter(h_in[i], NUM_BITS);
         printf(", ");
