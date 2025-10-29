@@ -121,8 +121,8 @@ int main(int argc, char** argv) {
     binaryPrinter(h_in[0], NUM_BITS);
     printf(", ");
     for(unsigned int i=1; i<N; ++i) {
-        h_in[i] = (uint32_t)(h_in[i-1] * i * i + i) % H; // (uint32_t)rand() % N; // values between 0 and N 
-        h_in_ref[i] = (uint32_t)(h_in_ref[i-1] * i * i + i) % H;
+        h_in[i] = rand();
+        h_in_ref[i] = h_in[i];
         binaryPrinter(h_in[i], NUM_BITS);
         printf(", ");
     }
@@ -194,15 +194,16 @@ int main(int argc, char** argv) {
             // Launches the three GPU kernels per pass (histogram → scan → scatter) 
             // Swaps input/output pointers between passes
 
+            // We also need to shift the bits accordingly after masking
+            uint32_t shift = r * NUM_BITS;
+
             //Allocates global memory buffers on device:
             // d_in, d_out for the arrays being sorted
             // d_histograms (size = numBlocks × H)
             // d_prefixes (prefix sums of histograms)
             // Performs small global memory resets (e.g. cudaMemset)
             // Does NOT touch shared or register memory (that’s only inside kernels)
-
-            // for(int r = 0; r < 1; r++) {
-            histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, Q, N);
+            histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, shift, Q, N);
             
             callTransposeKer<32>(d_hist, d_hist_T, numblocks, H);
 
@@ -214,7 +215,7 @@ int main(int argc, char** argv) {
 
             callTransposeKer<32>(d_hist_T, d_hist_scan, H, numblocks);
             
-            scatterKer<<<numblocks, B>>>(d_in, d_hist_scan, d_out, Q, N, mask);
+            scatterKer<<<numblocks, B>>>(d_in, d_hist_scan, d_out, Q, N, mask, shift);
             cudaDeviceSynchronize();
 
             // swap input and output arrays
@@ -255,7 +256,7 @@ int main(int argc, char** argv) {
             printf("%u ", gpu_res[b * H + i]);
     }
 
-    cudaMemcpy(h_out, d_out, mem_size, cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_out, d_in, mem_size, cudaMemcpyDeviceToHost);
 
     // element-wise compare of CPU and GPU execution
     printf("\n\n-- Result -- ");
@@ -274,7 +275,8 @@ int main(int argc, char** argv) {
     if (validated) {
         printf("\nVALIDATED: Result matches CUB result\n");
     } else {
-        printf("\nDID NOT VALIDATE: Result dont match CUB result!\n");
+        printf("\nDID NOT VALIDATE: Result dont match CUB result!\nEXITING!\n");
+        return -1;
     }
 
     printf("\nCUB Radix Sort Time: %lu microseconds\n", elapsed_cub);

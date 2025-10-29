@@ -5,6 +5,7 @@ __global__ void
 histogramKer(uint32_t* input
                             , uint32_t* histogram // Global set of histograms
                             , uint32_t mask
+                            , uint32_t shift
                             , uint32_t Q
                             , uint32_t N
 
@@ -30,7 +31,7 @@ histogramKer(uint32_t* input
     uint32_t idx = tid * Q + i;
     if (idx >= N) break;
     uint32_t curr_val = input[idx];
-    uint32_t bucket = curr_val & mask;
+    uint32_t bucket = (curr_val >> shift) & ((1 << NUM_BITS) - 1);
     atomicAdd((uint32_t*)&sh_hist[bucket], 1);
   }
 
@@ -95,7 +96,8 @@ __global__ void scatterKer(uint32_t* input,
                            uint32_t* output,
                            uint32_t Q,
                            uint32_t N,
-                           uint32_t mask) {
+                           uint32_t mask,
+                           uint32_t shift) {
     // Shared memory buffer
     __shared__ uint32_t rank[H];
 
@@ -117,7 +119,7 @@ __global__ void scatterKer(uint32_t* input,
 
         // (d) SCATTER: place each number into correct position
         uint32_t elem = input[idx];
-        int d = (int)(elem & mask);
+        int d = (int)((elem >> shift) & ((1 << NUM_BITS) - 1));
         uint32_t rank_before = atomicAdd(&rank[d], 1u);
         int pos = histogram_scan[blockIdx.x * H + d] + rank_before;
         output[pos] = elem;
