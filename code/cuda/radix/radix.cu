@@ -5,7 +5,7 @@
 #include <cuda_runtime.h>
 #include <cub/cub.cuh>
 
-#define GPU_RUNS 10
+#define GPU_RUNS 500
 #define ELEMENTS_PER_THREAD 10
 #define NUM_BITS 2
 #define H (1 << NUM_BITS)
@@ -196,21 +196,16 @@ int main(int argc, char** argv) {
 
             // for(int r = 0; r < 1; r++) {
             histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, Q, N);
-            cudaDeviceSynchronize();
             
             callTransposeKer<32>(d_hist, d_hist, numblocks, H); //Maybe use other B value here
-            cudaDeviceSynchronize();
 
             // d_tmp is used as a temporary buffer to make d_hist ready for simulated exclusive scan
             // Should be removed
             shiftKer<<<numblocks, B>>>(d_hist, d_tmp, N);
-            cudaDeviceSynchronize();
             
             scanIncAddI32(B, numblocks * H, d_tmp, d_hist_scan);
-            cudaDeviceSynchronize();
 
             callTransposeKer<32>(d_hist_scan, d_hist_scan, H, numblocks);
-            cudaDeviceSynchronize();
             
             scatterKer<<<numblocks, B>>>(d_in,d_hist_scan, d_out, Q, N, mask);
             cudaDeviceSynchronize();
