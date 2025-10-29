@@ -7,7 +7,7 @@
 
 #define GPU_RUNS 500
 #define ELEMENTS_PER_THREAD 10
-#define NUM_BITS 2
+#define NUM_BITS 4
 #define H (1 << NUM_BITS)
 
 #include "host_skel.cuh"
@@ -142,6 +142,9 @@ int main(int argc, char** argv) {
     cudaMalloc((void**)&d_tmp, hist_mem_size);
     cudaMalloc((void**)&d_in_ref,  mem_size);
     cudaMalloc((void**)&d_out_ref, mem_size);
+    // Allocating space for transposed histograms
+    uint32_t* d_hist_T;
+    cudaMalloc((void**)&d_hist_T, hist_mem_size);
 
     // copy host memory to device
     cudaMemcpy(d_in, h_in, mem_size, cudaMemcpyHostToDevice);
@@ -172,13 +175,17 @@ int main(int argc, char** argv) {
 
     // TODO: Could not make it run for multiple passes and VALIDATE
     uint64_t elapsed_cuda = 0.0;
+    // We need to process numblocks * H elements in total
+    // We have B threads per block
+    // Therefore (numblocks * H) / B blocks are needed
+    // (Ceil division)
+    int hist_grid = (numblocks * H + B - 1) / B;
     for (int i = 0; i < GPU_RUNS; i++) {
         cudaMemcpy(d_in, h_in, mem_size, cudaMemcpyHostToDevice);
         cudaMemset(d_out, 0, mem_size);
         cudaMemset(d_hist, 0, hist_mem_size);
         cudaMemset(d_hist_scan, 0, hist_mem_size);
         mask = (1 << NUM_BITS) - 1; // 4 bits = 0xF for radix 16
-
         gettimeofday(&t_start, NULL);
         for (int r = 0; r < num_passes; r++) {
             //The cpu does the following:
@@ -197,17 +204,17 @@ int main(int argc, char** argv) {
             // for(int r = 0; r < 1; r++) {
             histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, Q, N);
             
-            callTransposeKer<32>(d_hist, d_hist, numblocks, H); //Maybe use other B value here
+            callTransposeKer<32>(d_hist, d_hist_T, numblocks, H);
 
             // d_tmp is used as a temporary buffer to make d_hist ready for simulated exclusive scan
             // Should be removed
-            shiftKer<<<numblocks, B>>>(d_hist, d_tmp, N);
+            shiftKer<<<hist_grid, B>>>(d_hist_T, d_tmp, numblocks * H);
             
-            scanIncAddI32(B, numblocks * H, d_tmp, d_hist_scan);
+            scanIncAddI32(B, numblocks * H, d_tmp, d_hist_T);
 
-            callTransposeKer<32>(d_hist_scan, d_hist_scan, H, numblocks);
+            callTransposeKer<32>(d_hist_T, d_hist_scan, H, numblocks);
             
-            scatterKer<<<numblocks, B>>>(d_in,d_hist_scan, d_out, Q, N, mask);
+            scatterKer<<<numblocks, B>>>(d_in, d_hist_scan, d_out, Q, N, mask);
             cudaDeviceSynchronize();
 
             // swap input and output arrays
@@ -286,6 +293,7 @@ int main(int argc, char** argv) {
     cudaFree(d_tmp);
     cudaFree(d_in_ref);
     cudaFree(d_out_ref);
+    cudaFree(d_hist_T);
 }
 
 // Taken from CUB library examples
