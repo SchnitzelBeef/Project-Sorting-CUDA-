@@ -177,7 +177,6 @@ int main(int argc, char** argv) {
     const int num_passes = (W + NUM_BITS - 1) / NUM_BITS;
     unsigned int mask;
 
-    // TODO: Could not make it run for multiple passes and VALIDATE
     uint64_t elapsed_cuda = 0.0;
     // We need to process numblocks * H elements in total
     // We have B threads per block
