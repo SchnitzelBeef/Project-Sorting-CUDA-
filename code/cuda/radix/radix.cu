@@ -183,6 +183,7 @@ int main(int argc, char** argv) {
     // Therefore (numblocks * H) / B blocks are needed
     // (Ceil division)
     int hist_grid = (numblocks * H + B - 1) / B;
+    uint32_t shift;
     for (int i = 0; i < GPU_RUNS; i++) {
         cudaMemcpy(d_in, h_in, mem_size, cudaMemcpyHostToDevice);
         cudaMemset(d_out, 0, mem_size);
@@ -198,7 +199,7 @@ int main(int argc, char** argv) {
             // Swaps input/output pointers between passes
 
             // We also need to shift the bits accordingly after masking
-            uint32_t shift = r * NUM_BITS;
+            shift = r * NUM_BITS;
 
             //Allocates global memory buffers on device:
             // d_in, d_out for the arrays being sorted
