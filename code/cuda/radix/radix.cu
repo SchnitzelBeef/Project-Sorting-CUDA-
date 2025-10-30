@@ -6,9 +6,9 @@
 #include <cub/cub.cuh>
 
 #define GPU_RUNS 500
-#define ELEMENTS_PER_THREAD 10
 #define NUM_BITS 2
 #define H (1 << NUM_BITS)
+#define VERBOSE false
 
 #include "host_skel.cuh"
 #include "helper.h"
@@ -91,8 +91,8 @@ int main(int argc, char** argv) {
     // use the first CUDA device:
     cudaSetDevice(1);
     
-    uint32_t Q = 1;
-    unsigned int B = 4;
+    uint32_t Q = 1; // number of elements per thread
+    unsigned int B = 64; // number of threads per block
     unsigned int numblocks = (N + (Q * B - 1)) / (Q * B);
     printf("Pred. Q: %d \n", Q);
     printf("Pred. B: %d \n", B);
@@ -115,11 +115,13 @@ int main(int argc, char** argv) {
     
     // initialize the memory
     srand(time(NULL));
-    printf("\nInput:\n");
     h_in_ref[0] = 1;
     h_in[0] = 1;
-    binaryPrinter(h_in[0], NUM_BITS);
-    printf(", ");
+    if (VERBOSE) {
+        printf("\nInput:\n");
+        binaryPrinter(h_in[0], NUM_BITS);
+        printf(", ");
+    }
     for(unsigned int i=1; i<N; ++i) {
         // Chaining 4 rands to get 32-bit integer.
         h_in[i] = (rand() & 0xFF)
@@ -127,8 +129,10 @@ int main(int argc, char** argv) {
                 | ((rand() & 0xFF) << 16)
                 | ((rand() & 0xFF) << 24); 
         h_in_ref[i] = h_in[i];
-        binaryPrinter(h_in[i], NUM_BITS);
-        printf(", ");
+        if (VERBOSE) {
+            binaryPrinter(h_in[i], NUM_BITS);       
+            printf(", ");
+        }
     }
 
     // allocate device memory
@@ -245,27 +249,33 @@ int main(int argc, char** argv) {
     // element-wise compare of CPU and GPU execution
     printf("\n\n-- Original histogram (transposed) -- ");
     for (int b = 0; b < H; b++) {
-        printf("\n");
-        for (int i = 0; i < numblocks; i++)
-            printf("%u ", gpu_res[b * numblocks + i]);
+        if (VERBOSE) {
+            printf("\n");
+            for (int i = 0; i < numblocks; i++)
+                printf("%u ", gpu_res[b * numblocks + i]);
+        }
     }
 
     cudaMemcpy(gpu_res, d_hist_scan, hist_mem_size, cudaMemcpyDeviceToHost);
     
     // element-wise compare of CPU and GPU execution
-    printf("\n\n-- Scanned histogram -- ");
-    for (int b = 0; b < numblocks; b++) {
-        printf("\n");
-        for (int i = 0; i < H; i++)
-            printf("%u ", gpu_res[b * H + i]);
+    if (VERBOSE) {
+        printf("\n\n-- Scanned histogram -- ");
+        for (int b = 0; b < numblocks; b++) {
+            printf("\n");
+            for (int i = 0; i < H; i++)
+                printf("%u ", gpu_res[b * H + i]);
+        }
     }
 
     cudaMemcpy(h_out, d_in, mem_size, cudaMemcpyDeviceToHost);
 
     // element-wise compare of CPU and GPU execution
-    printf("\n\n-- Result -- ");
-    for (int i = 0; i < N; i++) 
-        printf("%d ", h_out[i]);
+    if (VERBOSE) {
+        printf("\n\n-- Result -- ");
+            for (int i = 0; i < N; i++) 
+            printf("%d ", h_out[i]);
+    }
 
     // Verify correctness against Cub result
     cudaMemcpy(h_out_ref, d_out_ref, mem_size, cudaMemcpyDeviceToHost);
