@@ -6,9 +6,9 @@
 #include <cub/cub.cuh>
 
 #define GPU_RUNS 500
-#define NUM_BITS 2
-#define H (1 << NUM_BITS)
-#define VERBOSE false
+#define NUM_BITS 2 // number of bits processed per pass
+#define H (1 << NUM_BITS) // histogram size or amount of numbers you can make with NUM_BITS bits
+#define VERBOSE true
 
 #include "host_skel.cuh"
 #include "helper.h"
@@ -91,8 +91,8 @@ int main(int argc, char** argv) {
     // use the first CUDA device:
     cudaSetDevice(1);
     
-    uint32_t Q = 1; // number of elements per thread
-    unsigned int B = 64; // number of threads per block
+    uint32_t Q = 5; // number of elements per thread
+    unsigned int B = 32; // number of threads per block
     unsigned int numblocks = (N + (Q * B - 1)) / (Q * B);
     printf("Pred. Q: %d \n", Q);
     printf("Pred. B: %d \n", B);
@@ -195,6 +195,7 @@ int main(int argc, char** argv) {
         cudaMemset(d_hist_scan, 0, hist_mem_size);
         mask = (1 << NUM_BITS) - 1; // 4 bits = 0xF for radix 16
         gettimeofday(&t_start, NULL);
+
         for (int r = 0; r < num_passes; r++) {
             //The cpu does the following:
             //Holds the outer loop over passes (for pass in [0..num_passes))
@@ -218,7 +219,8 @@ int main(int argc, char** argv) {
             // d_tmp is used as a temporary buffer to make d_hist ready for simulated exclusive scan
             // Should be removed
             shiftKer<<<hist_grid, B>>>(d_hist_T, d_tmp, numblocks * H);
-            
+            cudaDeviceSynchronize();
+              
             scanIncAddI32(B, numblocks * H, d_tmp, d_hist_T);
 
             callTransposeKer<32>(d_hist_T, d_hist_scan, H, numblocks);
@@ -230,8 +232,6 @@ int main(int argc, char** argv) {
             uint32_t* temp = d_in;
             d_in = d_out;
             d_out = temp;
-
-            mask = mask << NUM_BITS;
         }
         gettimeofday(&t_end, NULL);
         timeval_subtract(&t_diff, &t_end, &t_start);
