@@ -6,48 +6,44 @@
 #include <cub/cub.cuh>
 
 #define GPU_RUNS 500
-#define NUM_BITS 2 // number of bits processed per pass
-#define H (1 << NUM_BITS) // histogram size or amount of numbers you can make with NUM_BITS bits
 #define VERBOSE false
 
 #include "host_skel.cuh"
 #include "helper.h"
 #include "kernels.cuh"
 
-void cubRadixSort(uint32_t* d_in, uint32_t* d_out, size_t N, timeval& t_start, timeval& t_end);
+void handleArgs(int argc, char** argv, uint32_t& N, uint32_t& Q, uint32_t& B, uint32_t& NUM_BITS, bool& useFile);
 
-void binaryPrinter(int val, unsigned int decimal_points);
+void cubRadixSort(uint32_t* d_in, uint32_t* d_out, size_t N, timeval& t_start, timeval& t_end);
 
 void scanIncAddI32(const uint32_t B, const size_t N, uint32_t* d_in, uint32_t* d_out);
 
 template<int T>
 void callTransposeKer(uint32_t* inp_d, uint32_t* out_d, const uint32_t height, const uint32_t width);
 
-int main(int argc, char** argv) {
-    uint32_t N;
+void binaryPrinter(int val, unsigned int decimal_points);
 
-    initHwd();
+int main(int argc, char** argv) {
+    // Arg1: N - number of elements (Required)
+    // Arg2: Q - number of elements per thread (Optional) Default: 5
+    // Arg3: B - number of threads per block (Optional) Default: 32
+    // Arg4: b - number of bits per pass (Optional) Default: 2
+    // Arg5: flag - use external input file (Optional) Default: false
+    uint32_t N;
+    // Default parameters
+    uint32_t Q = 5;
+    uint32_t B = 32;
+    uint32_t NUM_BITS = 4;
+    bool useFile = false;
     
-    { // reading the number of elements 
-        if (argc != 2) { 
-            printf("Num Args is: %d instead of 1. Exiting!\n", argc); 
-            exit(1);
-        }
-        
-        N = (uint32_t)atoi(argv[1]);
-        
-        const uint32_t maxN = 500000000;
-        if(N > maxN) {
-            printf("N is too big; maximal value is %d. Exiting!\n", maxN);
-            exit(2);
-        }
-    }
+    handleArgs(argc, argv, N, Q, B, NUM_BITS, useFile);
+
+    const uint32_t H = 1 << NUM_BITS; // Number of buckets
+    initHwd();
     
     // use the first CUDA device:
     cudaSetDevice(0);
     
-    uint32_t Q = 5; // number of elements per thread
-    unsigned int B = 32; // number of threads per block
     unsigned int numblocks = (N + (Q * B - 1)) / (Q * B);
     uint32_t mem_size = N * sizeof(uint32_t);
     uint32_t hist_mem_size = numblocks * H * sizeof(uint32_t);
@@ -101,6 +97,7 @@ int main(int argc, char** argv) {
     uint32_t* d_tmp; //REMOVE ME later (only used for shifting)
     uint32_t* d_in_ref;
     uint32_t* d_out_ref;
+    uint32_t* d_hist_T; // Transposed histogram
     cudaMalloc((void**)&d_in,  mem_size);
     cudaMalloc((void**)&d_out, mem_size);
     cudaMalloc((void**)&d_hist, hist_mem_size);
@@ -108,8 +105,6 @@ int main(int argc, char** argv) {
     cudaMalloc((void**)&d_tmp, hist_mem_size);
     cudaMalloc((void**)&d_in_ref,  mem_size);
     cudaMalloc((void**)&d_out_ref, mem_size);
-    // Allocating space for transposed histograms
-    uint32_t* d_hist_T;
     cudaMalloc((void**)&d_hist_T, hist_mem_size);
 
     // copy host memory to device
@@ -170,7 +165,7 @@ int main(int argc, char** argv) {
             // d_prefixes (prefix sums of histograms)
             // Performs small global memory resets (e.g. cudaMemset)
             // Does NOT touch shared or register memory (that’s only inside kernels)
-            histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, shift, Q, N);
+            histogramKer<<<numblocks, B, H * sizeof(uint32_t)>>>(d_in, d_hist, mask, shift, Q, N, H, NUM_BITS);
             
             callTransposeKer<32>(d_hist, d_hist_T, numblocks, H);
 
@@ -183,7 +178,7 @@ int main(int argc, char** argv) {
 
             callTransposeKer<32>(d_hist_T, d_hist_scan, H, numblocks);
             
-            scatterKer<<<numblocks, B>>>(d_in, d_hist_scan, d_out, Q, N, mask, shift);
+            scatterKer<<<numblocks, B, H * sizeof(uint32_t)>>>(d_in, d_hist_scan, d_out, Q, N, mask, shift, H, NUM_BITS);
             cudaDeviceSynchronize();
 
             // swap input and output arrays
@@ -248,7 +243,7 @@ int main(int argc, char** argv) {
         printf("VALIDATED: Result matches CUB result\n");
     } else {
         printf("DID NOT VALIDATE: Result dont match CUB result!\nEXITING!\n");
-        return -1;
+        return 4;
     }
     printf("====\n");
     printf("CUB Radix Sort Time: %lu microseconds\n", elapsed_cub);
@@ -271,17 +266,44 @@ int main(int argc, char** argv) {
     cudaFree(d_hist_T);
 }
 
-// Binary printer for debugging:
-void binaryPrinter(int val, unsigned int decimal_points) {
-    for (int i = decimal_points-1; i >= 0; i--) {
-        if (val & (1 << i)) {
-            printf("1");
-        }
-        else {
-            printf("0");
-        }
+void handleArgs(int argc, char** argv, uint32_t& N, uint32_t& Q, uint32_t& B, uint32_t& NUM_BITS, bool& useFile) {
+    // Reading the number of elements 
+    if (argc < 2) { 
+        printf("Missing N (number of elements) Exiting!\n");
+        exit(1);
+    }
+    
+    N = (uint32_t)atoi(argv[1]);
+
+    const uint32_t maxN = 500000000;
+    if(N > maxN) {
+        printf("N is too big; maximal value is %d. Exiting!\n", maxN);
+        exit(2);
+    }
+
+    // Optional arguments
+    if (argc >= 3) {
+        Q = (uint32_t)atoi(argv[2]);
+    }
+
+    if (argc >= 4) {
+        B = (uint32_t)atoi(argv[3]);
+    }
+
+    if (argc >= 5) {
+        NUM_BITS = (uint32_t)atoi(argv[4]);
+    }
+
+    if (argc >= 6) {
+        bool useFile = (bool)atoi(argv[5]);
+    }
+
+    if (argc >= 7) {
+        printf("Too many arguments! Exiting!\n");
+        exit(3);
     }
 }
+
 
 template<int T>
 void callTransposeKer(uint32_t* inp_d, uint32_t* out_d, const uint32_t height, const uint32_t width) {
@@ -330,4 +352,16 @@ void cubRadixSort(uint32_t* d_in, uint32_t* d_out, size_t N, timeval& t_start, t
     gettimeofday(&t_end, NULL);
 
     cudaFree(d_temp_storage);
+}
+
+// Binary printer for debugging:
+void binaryPrinter(int val, unsigned int decimal_points) {
+    for (int i = decimal_points-1; i >= 0; i--) {
+        if (val & (1 << i)) {
+            printf("1");
+        }
+        else {
+            printf("0");
+        }
+    }
 }

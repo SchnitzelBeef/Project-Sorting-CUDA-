@@ -7,11 +7,12 @@ histogramKer( uint32_t* input
             , uint32_t shift
             , uint32_t Q
             , uint32_t N
-
+            , uint32_t H
+            , uint32_t NUM_BITS
 ) {
 
   // Shared memory buffer
-  __shared__ uint32_t sh_hist[H];
+  extern __shared__ uint32_t sh_hist[];
 
   // Zeroing shared histogram
   for (int i = threadIdx.x; i < H; i += blockDim.x) {
@@ -87,9 +88,11 @@ __global__ void scatterKer(uint32_t* input,
                            uint32_t Q,
                            uint32_t N,
                            uint32_t mask,
-                           uint32_t shift) {
+                           uint32_t shift,
+                           uint32_t H,
+                           uint32_t NUM_BITS) {
     // Shared memory buffer
-    __shared__ uint32_t rank[H];
+    extern __shared__ uint32_t rank[];
 
     // Zero shared ranks cooperatively (first H threads do it)
     for (int i = threadIdx.x; i < H; i += blockDim.x) {
