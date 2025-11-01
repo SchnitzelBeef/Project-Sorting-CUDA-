@@ -16,7 +16,7 @@ void handleArguments(int argc, char** argv, uint32_t& N, uint32_t& Q, uint32_t& 
 
 void cubRadixSort(uint32_t* d_in, uint32_t* d_out, size_t N, timeval& t_start, timeval& t_end);
 
-void scanIncAddI32(const uint32_t B, const size_t N, uint32_t* d_in, uint32_t* d_out);
+void scanExcAddI32(const uint32_t B, const size_t N, uint32_t* d_in, uint32_t* d_out);
 
 template<int T>
 void callTransposeKer(uint32_t* inp_d, uint32_t* out_d, const uint32_t height, const uint32_t width);
@@ -164,14 +164,7 @@ int main(int argc, char** argv) {
             histogramKer<<<numblocks, B, H * sizeof(uint32_t)>>>(d_in, d_hist, mask, shift, Q, N, H, NUM_BITS);
             
             callTransposeKer<32>(d_hist, d_hist_T, numblocks, H);
-
-            // d_tmp is used as a temporary buffer to make d_hist ready for simulated exclusive scan
-            // Should be removed
-            shiftKer<<<hist_grid, B>>>(d_hist_T, d_tmp, numblocks * H);
-            cudaDeviceSynchronize();
-              
-            scanIncAddI32(B, numblocks * H, d_tmp, d_hist_T);
-
+            scanExcAddI32(B, numblocks * H, d_hist_T, d_hist_T);
             callTransposeKer<32>(d_hist_T, d_hist_scan, H, numblocks);
             
             scatterKer<<<numblocks, B, H * sizeof(uint32_t)>>>(d_in, d_hist_scan, d_out, Q, N, mask, shift, H, NUM_BITS);
@@ -225,7 +218,7 @@ int main(int argc, char** argv) {
         printf("DID NOT VALIDATE: Result dont match CUB result!\nEXITING!\n");
         return 4;
     }
-    
+
     printf("====\n");
     printf("CUB Radix Sort Time: %lu microseconds\n", elapsed_cub);
     printf("CUDA Radix Sort Time: %lu microseconds\n", elapsed_cuda);
@@ -304,16 +297,15 @@ void callTransposeKer(uint32_t* inp_d, uint32_t* out_d, const uint32_t height, c
 }
 
 // Modified From assignment 2:
-void scanIncAddI32(const uint32_t B, const size_t N, uint32_t* d_in, uint32_t* d_out) {
+void scanExcAddI32(const uint32_t B, const size_t N, uint32_t* d_in, uint32_t* d_out) {
     // B: Desired CUDA block size (<= 1024, multiple of 32)
     // N: Length of the input array
     // d_in: Device input of size: N * sizeof(uint32_t)
     // d_out: device result of size: N * sizeof(uint32_t)
     uint32_t* d_tmp;
     cudaMalloc((void**)&d_tmp, MAX_BLOCK*sizeof(uint32_t));
-    cudaMemset(d_out, 0, N*sizeof(uint32_t));
 
-    scanInc<Add<uint32_t>> ( B, N, d_out, d_in, d_tmp );
+    scanExc<Add<uint32_t>> ( B, N, d_out, d_in, d_tmp );
 
     cudaFree(d_tmp);
 }
