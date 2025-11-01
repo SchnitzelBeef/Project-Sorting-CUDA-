@@ -12,7 +12,7 @@
 #include "helper.h"
 #include "kernels.cuh"
 
-void handleArgs(int argc, char** argv, uint32_t& N, uint32_t& Q, uint32_t& B, uint32_t& NUM_BITS, uint32_t& useFile);
+void handleArguments(int argc, char** argv, uint32_t& N, uint32_t& Q, uint32_t& B, uint32_t& NUM_BITS, uint32_t& useFile);
 
 void cubRadixSort(uint32_t* d_in, uint32_t* d_out, size_t N, timeval& t_start, timeval& t_end);
 
@@ -26,6 +26,8 @@ void getInputFromFile(const char* filename, uint32_t* h_in, const uint32_t N);
 void generateRandomInput(uint32_t* h_in, const uint32_t N, const uint32_t NUM_BITS);
 
 void copyvals(uint32_t* dest, uint32_t* src, const uint32_t N);
+
+void printVerbose(uint32_t* d_hist, uint32_t* d_hist_scan, uint32_t* gpu_res, uint32_t* h_out, uint32_t N, uint32_t H, unsigned int numblocks, uint32_t hist_mem_size);
 
 void binaryPrinter(int val, unsigned int decimal_points);
 
@@ -42,7 +44,7 @@ int main(int argc, char** argv) {
     uint32_t NUM_BITS = 4;
     uint32_t useFile = 0;
     
-    handleArgs(argc, argv, N, Q, B, NUM_BITS, useFile);
+    handleArguments(argc, argv, N, Q, B, NUM_BITS, useFile);
 
     const uint32_t H = 1 << NUM_BITS; // Number of buckets
     initHwd();
@@ -83,7 +85,7 @@ int main(int argc, char** argv) {
     copyvals(h_in_ref, h_in, N);
 
     // print input array
-    if (true) {
+    if (VERBOSE) {
         printf("Input Array: \n");
         for (uint32_t i = 0; i < N; i++) {
             printf("%u ", h_in[i]);
@@ -116,16 +118,6 @@ int main(int argc, char** argv) {
     cudaMemset(d_hist_scan, 0, hist_mem_size);
     cudaMemcpy(d_in_ref, h_in_ref, mem_size, cudaMemcpyHostToDevice);
     cudaMemset(d_out_ref, 0, mem_size);
-
-    // running Cub radix sort for reference
-    struct timeval t_start, t_end, t_diff;
-    uint64_t elapsed_cub = 0.0;
-    for (int i = 0; i < GPU_RUNS; i++) {
-        cubRadixSort(d_in_ref, d_out_ref, N, t_start, t_end);
-        timeval_subtract(&t_diff, &t_end, &t_start);
-        elapsed_cub += (t_diff.tv_sec*1e6+t_diff.tv_usec);
-    }
-    elapsed_cub /= GPU_RUNS;
     
     // a small number of dry runs
     // for(int r = 0; r < 1; r++) {
@@ -136,6 +128,8 @@ int main(int argc, char** argv) {
     const int num_passes = (W + NUM_BITS - 1) / NUM_BITS;
     unsigned int mask;
 
+    // timing the GPU computation
+    struct timeval t_start, t_end, t_diff;
     uint64_t elapsed_cuda = 0.0;
     // We need to process numblocks * H elements in total
     // We have B threads per block
@@ -193,43 +187,26 @@ int main(int argc, char** argv) {
         elapsed_cuda += (t_diff.tv_sec*1e6+t_diff.tv_usec);
     }
     elapsed_cuda /= GPU_RUNS;
+
+
+    // running Cub radix sort for reference
+    uint64_t elapsed_cub = 0.0;
+    for (int i = 0; i < GPU_RUNS; i++) {
+        cubRadixSort(d_in_ref, d_out_ref, N, t_start, t_end);
+        timeval_subtract(&t_diff, &t_end, &t_start);
+        elapsed_cub += (t_diff.tv_sec*1e6+t_diff.tv_usec);
+    }
+    elapsed_cub /= GPU_RUNS;
     
         
     // check for errors
     gpuAssert( cudaPeekAtLastError() );
 
-    // copy result from device to host
-    cudaMemcpy(gpu_res, d_hist, hist_mem_size, cudaMemcpyDeviceToHost);
-
-    // element-wise compare of CPU and GPU execution
-    if (VERBOSE) {
-    printf("\n\n-- Original histogram (transposed) -- ");
-    for (int b = 0; b < H; b++) {
-            printf("\n");
-            for (int i = 0; i < numblocks; i++)
-                printf("%u ", gpu_res[b * numblocks + i]);
-        }
-    }
-
-    cudaMemcpy(gpu_res, d_hist_scan, hist_mem_size, cudaMemcpyDeviceToHost);
-    
-    // element-wise compare of CPU and GPU execution
-    if (VERBOSE) {
-        printf("\n\n-- Scanned histogram -- ");
-        for (int b = 0; b < numblocks; b++) {
-            printf("\n");
-            for (int i = 0; i < H; i++)
-                printf("%u ", gpu_res[b * H + i]);
-        }
-    }
-
+    // Copying sorted array back to host
     cudaMemcpy(h_out, d_in, mem_size, cudaMemcpyDeviceToHost);
 
-    // element-wise compare of CPU and GPU execution
     if (VERBOSE) {
-        printf("\n\n-- Result -- ");
-            for (int i = 0; i < N; i++) 
-            printf("%d ", h_out[i]);
+        printVerbose(d_hist, d_hist_scan, gpu_res, h_out, N, H, numblocks, hist_mem_size);
     }
 
     // Verify correctness against Cub result
@@ -241,12 +218,14 @@ int main(int argc, char** argv) {
             break;
         }
     }
+
     if (validated) {
         printf("VALIDATED: Result matches CUB result\n");
     } else {
         printf("DID NOT VALIDATE: Result dont match CUB result!\nEXITING!\n");
         return 4;
     }
+    
     printf("====\n");
     printf("CUB Radix Sort Time: %lu microseconds\n", elapsed_cub);
     printf("CUDA Radix Sort Time: %lu microseconds\n", elapsed_cuda);
@@ -270,7 +249,7 @@ int main(int argc, char** argv) {
     return 0;
 }
 
-void handleArgs(int argc, char** argv, uint32_t& N, uint32_t& Q, uint32_t& B, uint32_t& NUM_BITS, uint32_t& useFile) {
+void handleArguments(int argc, char** argv, uint32_t& N, uint32_t& Q, uint32_t& B, uint32_t& NUM_BITS, uint32_t& useFile) {
     // Reading the number of elements 
     if (argc < 2) { 
         printf("Missing N (number of elements) Exiting!\n");
@@ -358,6 +337,36 @@ void getInputFromFile(const char* filename, uint32_t* h_in, const uint32_t N) {
             // read the comma
             fscanf(f, "%c", &ch); // ','
         }
+    }
+}
+
+void printVerbose(uint32_t* d_hist, uint32_t* d_hist_scan, uint32_t* gpu_res, uint32_t* h_out, uint32_t N, uint32_t H, unsigned int numblocks, uint32_t hist_mem_size) {
+    cudaMemcpy(gpu_res, d_hist, hist_mem_size, cudaMemcpyDeviceToHost);
+
+    // Print original histogram for debugging
+    printf("\n\n-- Original histogram (transposed) -- ");
+    for (int b = 0; b < H; b++) {
+        printf("\n");
+        for (int i = 0; i < numblocks; i++) {
+            printf("%u ", gpu_res[b * numblocks + i]);
+        }
+    }
+
+    cudaMemcpy(gpu_res, d_hist_scan, hist_mem_size, cudaMemcpyDeviceToHost);
+    
+    // Print scanned histogram for debugging
+    printf("\n\n-- Scanned histogram -- ");
+    for (int b = 0; b < numblocks; b++) {
+        printf("\n");
+        for (int i = 0; i < H; i++) {
+            printf("%u ", gpu_res[b * H + i]);
+        }
+    }
+
+    // Print result array
+    printf("\n\n-- Result -- ");
+    for (int i = 0; i < N; i++) {
+        printf("%d ", h_out[i]);
     }
 }
 
