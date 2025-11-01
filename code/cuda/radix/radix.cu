@@ -5,7 +5,7 @@
 #include <cuda_runtime.h>
 #include <cub/cub.cuh>
 
-#define GPU_RUNS 500
+#define GPU_RUNS 400
 #define VERBOSE false
 
 #include "host_skel.cuh"
