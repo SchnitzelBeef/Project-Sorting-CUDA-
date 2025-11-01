@@ -12,7 +12,7 @@
 #include "helper.h"
 #include "kernels.cuh"
 
-void handleArgs(int argc, char** argv, uint32_t& N, uint32_t& Q, uint32_t& B, uint32_t& NUM_BITS, bool& useFile);
+void handleArgs(int argc, char** argv, uint32_t& N, uint32_t& Q, uint32_t& B, uint32_t& NUM_BITS, uint32_t& useFile);
 
 void cubRadixSort(uint32_t* d_in, uint32_t* d_out, size_t N, timeval& t_start, timeval& t_end);
 
@@ -21,6 +21,12 @@ void scanIncAddI32(const uint32_t B, const size_t N, uint32_t* d_in, uint32_t* d
 template<int T>
 void callTransposeKer(uint32_t* inp_d, uint32_t* out_d, const uint32_t height, const uint32_t width);
 
+void getInputFromFile(const char* filename, uint32_t* h_in, const uint32_t N);
+
+void generateRandomInput(uint32_t* h_in, const uint32_t N, const uint32_t NUM_BITS);
+
+void copyvals(uint32_t* dest, uint32_t* src, const uint32_t N);
+
 void binaryPrinter(int val, unsigned int decimal_points);
 
 int main(int argc, char** argv) {
@@ -28,13 +34,13 @@ int main(int argc, char** argv) {
     // Arg2: Q - number of elements per thread (Optional) Default: 5
     // Arg3: B - number of threads per block (Optional) Default: 32
     // Arg4: b - number of bits per pass (Optional) Default: 2
-    // Arg5: flag - use external input file (Optional) Default: false
+    // Arg5: flag - use external input file (Optional) Default: 0 (false)
     uint32_t N;
     // Default parameters
     uint32_t Q = 5;
     uint32_t B = 32;
     uint32_t NUM_BITS = 4;
-    bool useFile = false;
+    uint32_t useFile = 0;
     
     handleArgs(argc, argv, N, Q, B, NUM_BITS, useFile);
 
@@ -68,25 +74,21 @@ int main(int argc, char** argv) {
     
     
     // initialize the memory
-    srand(time(NULL));
-    h_in_ref[0] = 1;
-    h_in[0] = 1;
-    if (VERBOSE) {
-        printf("Input:\n");
-        binaryPrinter(h_in[0], NUM_BITS);
-        printf(", ");
+    if (useFile) {
+        getInputFromFile("input.txt", h_in, N);
+    } else {
+        generateRandomInput(h_in, N, NUM_BITS);
     }
-    for(unsigned int i=1; i<N; ++i) {
-        // Chaining 4 rands to get 32-bit integer.
-        h_in[i] = (rand() & 0xFF)
-                | ((rand() & 0xFF) << 8)
-                | ((rand() & 0xFF) << 16)
-                | ((rand() & 0xFF) << 24); 
-        h_in_ref[i] = h_in[i];
-        if (VERBOSE) {
-            binaryPrinter(h_in[i], NUM_BITS);       
-            printf(", ");
+
+    copyvals(h_in_ref, h_in, N);
+
+    // print input array
+    if (true) {
+        printf("Input Array: \n");
+        for (uint32_t i = 0; i < N; i++) {
+            printf("%u ", h_in[i]);
         }
+        printf("\n");
     }
 
     // allocate device memory
@@ -264,9 +266,11 @@ int main(int argc, char** argv) {
     cudaFree(d_in_ref);
     cudaFree(d_out_ref);
     cudaFree(d_hist_T);
+
+    return 0;
 }
 
-void handleArgs(int argc, char** argv, uint32_t& N, uint32_t& Q, uint32_t& B, uint32_t& NUM_BITS, bool& useFile) {
+void handleArgs(int argc, char** argv, uint32_t& N, uint32_t& Q, uint32_t& B, uint32_t& NUM_BITS, uint32_t& useFile) {
     // Reading the number of elements 
     if (argc < 2) { 
         printf("Missing N (number of elements) Exiting!\n");
@@ -295,7 +299,7 @@ void handleArgs(int argc, char** argv, uint32_t& N, uint32_t& Q, uint32_t& B, ui
     }
 
     if (argc >= 6) {
-        bool useFile = (bool)atoi(argv[5]);
+        useFile = (uint32_t)atoi(argv[5]);
     }
 
     if (argc >= 7) {
@@ -333,6 +337,54 @@ void scanIncAddI32(const uint32_t B, const size_t N, uint32_t* d_in, uint32_t* d
     scanInc<Add<uint32_t>> ( B, N, d_out, d_in, d_tmp );
 
     cudaFree(d_tmp);
+}
+
+void getInputFromFile(const char* filename, uint32_t* h_in, const uint32_t N) {
+    FILE* f = fopen(filename, "r");
+    if (f == NULL) {
+        printf("Error opening file %s\n", filename);
+        exit(5);
+    }
+    // read first '[' chararcter
+    char ch = fgetc(f);
+
+    for (uint64_t i = 0; i < N; ++i) {
+        fscanf(f, "%u", &h_in[i]);
+        // Skip 'u32'
+        fscanf(f, "%c", &ch); // 'u'
+        fscanf(f, "%c", &ch); // '3'
+        fscanf(f, "%c", &ch); // '2'
+        if (i < N - 1) {
+            // read the comma
+            fscanf(f, "%c", &ch); // ','
+        }
+    }
+}
+
+void generateRandomInput(uint32_t* h_in, const uint32_t N, const uint32_t NUM_BITS) {
+    srand(time(NULL));
+    if (VERBOSE) {
+        printf("Input:\n");
+        binaryPrinter(h_in[0], NUM_BITS);
+        printf(", ");
+    }
+    for(unsigned int i=0; i<N; ++i) {
+        // Chaining 4 rands to get 32-bit integer.
+        h_in[i] = (rand() & 0xFF)
+                | ((rand() & 0xFF) << 8)
+                | ((rand() & 0xFF) << 16)
+                | ((rand() & 0xFF) << 24); 
+        if (VERBOSE) {
+            binaryPrinter(h_in[i], NUM_BITS);       
+            printf(", ");
+        }
+    }
+}
+
+void copyvals(uint32_t* dest, uint32_t* src, const uint32_t N) {
+    for (uint32_t i = 0; i < N; i++) {
+        dest[i] = src[i];
+    }
 }
 
 // Taken from CUB library examples
