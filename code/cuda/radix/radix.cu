@@ -6,7 +6,7 @@
 #include <cub/cub.cuh>
 
 #define GPU_RUNS 400
-#define VERBOSE false
+#define VERBOSE true
 
 #include "host_skel.cuh"
 #include "helper.h"
@@ -41,7 +41,7 @@ int main(int argc, char** argv) {
     // Default parameters
     uint32_t Q = 5;
     uint32_t B = 32;
-    uint32_t NUM_BITS = 4;
+    uint32_t NUM_BITS = 8;
     uint32_t useFile = 0;
     
     handleArguments(argc, argv, N, Q, B, NUM_BITS, useFile);

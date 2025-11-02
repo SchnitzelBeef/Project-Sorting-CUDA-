@@ -33,8 +33,10 @@ histogramKer( uint32_t* input
 
   __syncthreads();
 
-  if (threadIdx.x < H) //first H threads copy
-    histogram[blockIdx.x * H + threadIdx.x] = sh_hist[threadIdx.x];
+  // Copy shared histogram to global memory
+  for (int i = threadIdx.x; i < H; i += blockDim.x) {
+      histogram[blockIdx.x * H + i] = sh_hist[i];
+  }
 }
 
 // Modified from assignment 3-4:
