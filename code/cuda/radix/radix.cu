@@ -5,14 +5,16 @@
 #include <cuda_runtime.h>
 #include <cub/cub.cuh>
 
-#define GPU_RUNS 400
+#define GPU_RUNS 500
+#define NUM_BITS 2 // number of bits processed per pass
+#define H (1 << NUM_BITS) // histogram size or amount of numbers you can make with NUM_BITS bits
 #define VERBOSE true
 
 #include "host_skel.cuh"
 #include "helper.h"
 #include "kernels.cuh"
 
-void handleArguments(int argc, char** argv, uint32_t& N, uint32_t& Q, uint32_t& B, uint32_t& NUM_BITS, uint32_t& useFile);
+//void handleArguments(int argc, char** argv, uint32_t& N, uint32_t& Q, uint32_t& B, uint32_t& NUM_BITS, uint32_t& useFile);
 
 void cubRadixSort(uint32_t* d_in, uint32_t* d_out, size_t N, timeval& t_start, timeval& t_end);
 
@@ -23,34 +25,29 @@ void callTransposeKer(uint32_t* inp_d, uint32_t* out_d, const uint32_t height, c
 
 void getInputFromFile(const char* filename, uint32_t* h_in, const uint32_t N);
 
-void generateRandomInput(uint32_t* h_in, const uint32_t N, const uint32_t NUM_BITS);
+void generateRandomInput(uint32_t* h_in, const uint32_t N);
 
 void copyvals(uint32_t* dest, uint32_t* src, const uint32_t N);
 
-void printVerbose(uint32_t* d_hist, uint32_t* d_hist_scan, uint32_t* gpu_res, uint32_t* h_out, uint32_t N, uint32_t H, unsigned int numblocks, uint32_t hist_mem_size);
+void printVerbose(uint32_t* d_hist, uint32_t* d_hist_scan, uint32_t* gpu_res, uint32_t* h_out, uint32_t N, unsigned int numblocks, uint32_t hist_mem_size);
 
 void binaryPrinter(int val, unsigned int decimal_points);
 
 int main(int argc, char** argv) {
     // Arg1: N - number of elements (Required)
-    // Arg2: Q - number of elements per thread (Optional) Default: 5
-    // Arg3: B - number of threads per block (Optional) Default: 32
-    // Arg4: b - number of bits per pass (Optional) Default: 2
     // Arg5: flag - use external input file (Optional) Default: 0 (false)
-    uint32_t N;
+    uint32_t N = 100;
     // Default parameters
     uint32_t Q = 5;
     uint32_t B = 32;
-    uint32_t NUM_BITS = 8;
     uint32_t useFile = 0;
     
-    handleArguments(argc, argv, N, Q, B, NUM_BITS, useFile);
+    // handleArguments(argc, argv, N, Q, B, NUM_BITS, useFile);
 
-    const uint32_t H = 1 << NUM_BITS; // Number of buckets
     initHwd();
     
     // use the first CUDA device:
-    cudaSetDevice(0);
+    cudaSetDevice(1);
     
     unsigned int numblocks = (N + (Q * B - 1)) / (Q * B);
     uint32_t mem_size = N * sizeof(uint32_t);
@@ -79,7 +76,7 @@ int main(int argc, char** argv) {
     if (useFile) {
         getInputFromFile("input.txt", h_in, N);
     } else {
-        generateRandomInput(h_in, N, NUM_BITS);
+        generateRandomInput(h_in, N);
     }
 
     copyvals(h_in_ref, h_in, N);
@@ -161,13 +158,13 @@ int main(int argc, char** argv) {
             // d_prefixes (prefix sums of histograms)
             // Performs small global memory resets (e.g. cudaMemset)
             // Does NOT touch shared or register memory (that’s only inside kernels)
-            histogramKer<<<numblocks, B, H * sizeof(uint32_t)>>>(d_in, d_hist, mask, shift, Q, N, H, NUM_BITS);
+            histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, shift, Q, N);
             
             callTransposeKer<32>(d_hist, d_hist_T, numblocks, H);
             scanExcAddI32(B, numblocks * H, d_hist_T, d_hist_T);
             callTransposeKer<32>(d_hist_T, d_hist_scan, H, numblocks);
             
-            scatterKer<<<numblocks, B, H * sizeof(uint32_t)>>>(d_in, d_hist_scan, d_out, Q, N, mask, shift, H, NUM_BITS);
+            scatterKer<<<numblocks, B>>>(d_in, d_hist_scan, d_out, Q, N, mask, shift);
             cudaDeviceSynchronize();
 
             // swap input and output arrays
@@ -199,7 +196,7 @@ int main(int argc, char** argv) {
     cudaMemcpy(h_out, d_in, mem_size, cudaMemcpyDeviceToHost);
 
     if (VERBOSE) {
-        printVerbose(d_hist, d_hist_scan, gpu_res, h_out, N, H, numblocks, hist_mem_size);
+        printVerbose(d_hist, d_hist_scan, gpu_res, h_out, N, numblocks, hist_mem_size);
     }
 
     // Verify correctness against Cub result
@@ -242,43 +239,43 @@ int main(int argc, char** argv) {
     return 0;
 }
 
-void handleArguments(int argc, char** argv, uint32_t& N, uint32_t& Q, uint32_t& B, uint32_t& NUM_BITS, uint32_t& useFile) {
-    // Reading the number of elements 
-    if (argc < 2) { 
-        printf("Missing N (number of elements) Exiting!\n");
-        exit(1);
-    }
+// void handleArguments(int argc, char** argv, uint32_t& N, uint32_t& Q, uint32_t& B, uint32_t& NUM_BITS, uint32_t& useFile) {
+//     // Reading the number of elements 
+//     if (argc < 2) { 
+//         printf("Missing N (number of elements) Exiting!\n");
+//         exit(1);
+//     }
     
-    N = (uint32_t)atoi(argv[1]);
+//     N = (uint32_t)atoi(argv[1]);
 
-    const uint32_t maxN = 500000000;
-    if(N > maxN) {
-        printf("N is too big; maximal value is %d. Exiting!\n", maxN);
-        exit(2);
-    }
+//     const uint32_t maxN = 500000000;
+//     if(N > maxN) {
+//         printf("N is too big; maximal value is %d. Exiting!\n", maxN);
+//         exit(2);
+//     }
 
-    // Optional arguments
-    if (argc >= 3) {
-        Q = (uint32_t)atoi(argv[2]);
-    }
+//     // Optional arguments
+//     if (argc >= 3) {
+//         Q = (uint32_t)atoi(argv[2]);
+//     }
 
-    if (argc >= 4) {
-        B = (uint32_t)atoi(argv[3]);
-    }
+//     if (argc >= 4) {
+//         B = (uint32_t)atoi(argv[3]);
+//     }
 
-    if (argc >= 5) {
-        NUM_BITS = (uint32_t)atoi(argv[4]);
-    }
+//     if (argc >= 5) {
+//         NUM_BITS = (uint32_t)atoi(argv[4]);
+//     }
 
-    if (argc >= 6) {
-        useFile = (uint32_t)atoi(argv[5]);
-    }
+//     if (argc >= 6) {
+//         useFile = (uint32_t)atoi(argv[5]);
+//     }
 
-    if (argc >= 7) {
-        printf("Too many arguments! Exiting!\n");
-        exit(3);
-    }
-}
+//     if (argc >= 7) {
+//         printf("Too many arguments! Exiting!\n");
+//         exit(3);
+//     }
+// }
 
 
 template<int T>
@@ -332,7 +329,7 @@ void getInputFromFile(const char* filename, uint32_t* h_in, const uint32_t N) {
     }
 }
 
-void printVerbose(uint32_t* d_hist, uint32_t* d_hist_scan, uint32_t* gpu_res, uint32_t* h_out, uint32_t N, uint32_t H, unsigned int numblocks, uint32_t hist_mem_size) {
+void printVerbose(uint32_t* d_hist, uint32_t* d_hist_scan, uint32_t* gpu_res, uint32_t* h_out, uint32_t N, unsigned int numblocks, uint32_t hist_mem_size) {
     cudaMemcpy(gpu_res, d_hist, hist_mem_size, cudaMemcpyDeviceToHost);
 
     // Print original histogram for debugging
@@ -362,7 +359,7 @@ void printVerbose(uint32_t* d_hist, uint32_t* d_hist_scan, uint32_t* gpu_res, ui
     }
 }
 
-void generateRandomInput(uint32_t* h_in, const uint32_t N, const uint32_t NUM_BITS) {
+void generateRandomInput(uint32_t* h_in, const uint32_t N) {
     srand(time(NULL));
     if (VERBOSE) {
         printf("Input:\n");
