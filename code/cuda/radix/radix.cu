@@ -18,6 +18,10 @@ void cubRadixSort(uint32_t* d_in, uint32_t* d_out, size_t N, timeval& t_start, t
 
 void scanExcAddI32(const uint32_t B, const size_t N, uint32_t* d_in, uint32_t* d_out);
 
+void scanIncAddI32(const uint32_t B, const size_t N, uint32_t* d_in, uint32_t* d_out);
+
+void sgmScanIncAddI32( const uint32_t B, const size_t N, const uint32_t H, uint32_t* d_inp, uint32_t* d_out);
+
 template<int T>
 void callTransposeKer(uint32_t* inp_d, uint32_t* out_d, const uint32_t height, const uint32_t width);
 
@@ -98,7 +102,7 @@ int main(int argc, char** argv) {
     uint32_t* d_out;
     uint32_t* d_hist;
     uint32_t* d_hist_scan;
-    uint32_t* d_tmp; //REMOVE ME later (only used for shifting)
+    uint32_t* d_hist_sgm_scan;
     uint32_t* d_in_ref;
     uint32_t* d_out_ref;
     uint32_t* d_hist_T; // Transposed histogram
@@ -106,7 +110,7 @@ int main(int argc, char** argv) {
     cudaMalloc((void**)&d_out, mem_size);
     cudaMalloc((void**)&d_hist, hist_mem_size);
     cudaMalloc((void**)&d_hist_scan, hist_mem_size);
-    cudaMalloc((void**)&d_tmp, hist_mem_size);
+    cudaMalloc((void**)&d_hist_sgm_scan, hist_mem_size);
     cudaMalloc((void**)&d_in_ref,  mem_size);
     cudaMalloc((void**)&d_out_ref, mem_size);
     cudaMalloc((void**)&d_hist_T, hist_mem_size);
@@ -116,6 +120,7 @@ int main(int argc, char** argv) {
     cudaMemset(d_out, 0, mem_size);
     cudaMemset(d_hist, 0, hist_mem_size);
     cudaMemset(d_hist_scan, 0, hist_mem_size);
+    cudaMemset(d_hist_sgm_scan, 0, hist_mem_size);
     cudaMemcpy(d_in_ref, h_in_ref, mem_size, cudaMemcpyHostToDevice);
     cudaMemset(d_out_ref, 0, mem_size);
     
@@ -142,6 +147,7 @@ int main(int argc, char** argv) {
         cudaMemset(d_out, 0, mem_size);
         cudaMemset(d_hist, 0, hist_mem_size);
         cudaMemset(d_hist_scan, 0, hist_mem_size);
+        cudaMemset(d_hist_sgm_scan, 0, hist_mem_size);
         mask = (1 << NUM_BITS) - 1; // 4 bits = 0xF for radix 16
         gettimeofday(&t_start, NULL);
 
@@ -163,11 +169,15 @@ int main(int argc, char** argv) {
             // Does NOT touch shared or register memory (that’s only inside kernels)
             histogramKer<<<numblocks, B, H * sizeof(uint32_t)>>>(d_in, d_hist, mask, shift, Q, N, H, NUM_BITS);
             
-            callTransposeKer<32>(d_hist, d_hist_T, numblocks, H);
-            scanExcAddI32(B, numblocks * H, d_hist_T, d_hist_T);
-            callTransposeKer<32>(d_hist_T, d_hist_scan, H, numblocks);
+            sgmScanIncAddI32(B, numblocks * H, H, d_hist, d_hist_sgm_scan);
             
-            scatterKer<<<numblocks, B, H * sizeof(uint32_t)>>>(d_in, d_hist_scan, d_out, Q, N, mask, shift, H, NUM_BITS);
+            callTransposeKer<32>(d_hist, d_hist_T, numblocks, H);
+            scanIncAddI32(B, numblocks * H, d_hist_T, d_hist_T);
+            callTransposeKer<32>(d_hist_T, d_hist_scan, H, numblocks);
+
+            
+            scatterKer<<<numblocks, B, H * sizeof(uint32_t)>>>(d_in, d_hist_scan, d_hist_sgm_scan, d_out, N, Q, NUM_BITS, r*NUM_BITS);
+
             cudaDeviceSynchronize();
 
             // swap input and output arrays
@@ -234,7 +244,7 @@ int main(int argc, char** argv) {
     cudaFree(d_out);
     cudaFree(d_hist);
     cudaFree(d_hist_scan);
-    cudaFree(d_tmp);
+    cudaFree(d_hist_sgm_scan);
     cudaFree(d_in_ref);
     cudaFree(d_out_ref);
     cudaFree(d_hist_T);
@@ -296,7 +306,7 @@ void callTransposeKer(uint32_t* inp_d, uint32_t* out_d, const uint32_t height, c
     coalsTransposeKer<T> <<< grid, block >>>(inp_d, out_d, height, width);
 }
 
-// Modified From assignment 2:
+// Modified from assignment 2:
 void scanExcAddI32(const uint32_t B, const size_t N, uint32_t* d_in, uint32_t* d_out) {
     // B: Desired CUDA block size (<= 1024, multiple of 32)
     // N: Length of the input array
@@ -308,6 +318,56 @@ void scanExcAddI32(const uint32_t B, const size_t N, uint32_t* d_in, uint32_t* d
     scanExc<Add<uint32_t>> ( B, N, d_out, d_in, d_tmp );
 
     cudaFree(d_tmp);
+}
+
+// Modified from assignment 2:
+void scanIncAddI32(const uint32_t B, const size_t N, uint32_t* d_in, uint32_t* d_out) {
+    // B: Desired CUDA block size (<= 1024, multiple of 32)
+    // N: Length of the input array
+    // d_in: Device input of size: N * sizeof(uint32_t)
+    // d_out: device result of size: N * sizeof(uint32_t)
+    uint32_t* d_tmp;
+    cudaMalloc((void**)&d_tmp, MAX_BLOCK*sizeof(uint32_t));
+
+    scanInc<Add<uint32_t>> ( B, N, d_out, d_in, d_tmp );
+
+    cudaFree(d_tmp);
+}
+
+// Modified from assignment 2:
+void sgmScanIncAddI32( const uint32_t B     // desired CUDA block size ( <= 1024, multiple of 32)
+                    , const size_t   N     // length of the input array
+                    , const uint32_t H           // Size of histograms
+                    , uint32_t* d_inp           // device input  of size: N * sizeof(int)
+                    , uint32_t* d_out           // device result of size: N * sizeof(int)
+) {
+    uint32_t*  d_tmp_vals;
+    char* d_tmp_flag;
+    char* d_inp_flag;
+    char* h_inp_flag = (char*)malloc(N);
+    cudaMalloc((void**)&d_tmp_vals, MAX_BLOCK*sizeof(int));
+    cudaMalloc((void**)&d_tmp_flag, MAX_BLOCK*sizeof(char));
+    cudaMalloc((void**)&d_inp_flag, N * sizeof(char));
+    cudaMemset(d_out, 0, N*sizeof(int));
+
+    { // init flag array (OPTIMIZE THIS AWAY)
+        for(uint32_t i = 0; i < N; i++) {
+            if (i % H == 0) {
+                h_inp_flag[i] = 1;
+            } else {
+                h_inp_flag[i] = 0;
+            }
+        }
+    }
+    // copy flag array to GPU
+    cudaMemcpy(d_inp_flag, h_inp_flag, N*sizeof(char), cudaMemcpyHostToDevice);
+
+    sgmScanInc< Add<uint32_t> >( B, N, d_out, d_inp_flag, d_inp, d_tmp_vals, d_tmp_flag);
+
+    free(h_inp_flag);
+    cudaFree(d_tmp_vals);
+    cudaFree(d_tmp_flag);
+    cudaFree(d_inp_flag);
 }
 
 void getInputFromFile(const char* filename, uint32_t* h_in, const uint32_t N) {
