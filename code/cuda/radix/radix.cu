@@ -6,7 +6,7 @@
 #include <cub/cub.cuh>
 
 #define GPU_RUNS 500
-#define NUM_BITS 2 // number of bits processed per pass
+#define NUM_BITS 8 // number of bits processed per pass
 #define H (1 << NUM_BITS) // histogram size or amount of numbers you can make with NUM_BITS bits
 #define VERBOSE true
 
@@ -36,7 +36,7 @@ void binaryPrinter(int val, unsigned int decimal_points);
 int main(int argc, char** argv) {
     // Arg1: N - number of elements (Required)
     // Arg5: flag - use external input file (Optional) Default: 0 (false)
-    uint32_t N = 100;
+    uint32_t N = 1000;
     // Default parameters
     uint32_t Q = 5;
     uint32_t B = 32;
@@ -125,8 +125,18 @@ int main(int argc, char** argv) {
     const int num_passes = (W + NUM_BITS - 1) / NUM_BITS;
     unsigned int mask;
 
-    // timing the GPU computation
+
     struct timeval t_start, t_end, t_diff;
+    // running Cub radix sort for reference
+    uint64_t elapsed_cub = 0.0;
+    for (int i = 0; i < GPU_RUNS; i++) {
+        cubRadixSort(d_in_ref, d_out_ref, N, t_start, t_end);
+        timeval_subtract(&t_diff, &t_end, &t_start);
+        elapsed_cub += (t_diff.tv_sec*1e6+t_diff.tv_usec);
+    }
+    elapsed_cub /= GPU_RUNS;
+
+    // timing the GPU computation
     uint64_t elapsed_cuda = 0.0;
     // We need to process numblocks * H elements in total
     // We have B threads per block
@@ -177,16 +187,6 @@ int main(int argc, char** argv) {
         elapsed_cuda += (t_diff.tv_sec*1e6+t_diff.tv_usec);
     }
     elapsed_cuda /= GPU_RUNS;
-
-
-    // running Cub radix sort for reference
-    uint64_t elapsed_cub = 0.0;
-    for (int i = 0; i < GPU_RUNS; i++) {
-        cubRadixSort(d_in_ref, d_out_ref, N, t_start, t_end);
-        timeval_subtract(&t_diff, &t_end, &t_start);
-        elapsed_cub += (t_diff.tv_sec*1e6+t_diff.tv_usec);
-    }
-    elapsed_cub /= GPU_RUNS;
     
         
     // check for errors
