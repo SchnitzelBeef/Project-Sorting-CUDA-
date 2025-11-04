@@ -88,7 +88,7 @@ __global__ void scatterKer(uint32_t* input,
                            uint32_t* output,
                            const size_t N,
                            const size_t bits,
-                           const size_t start_bit) {
+                           const size_t shift) {
 
   // Local shared histogram across the block
   // USES STATIC MEMORY SO ONLY WORKS WHEN HARDCODED Q = 4 and B = 2
@@ -117,7 +117,7 @@ __global__ void scatterKer(uint32_t* input,
     
     for (int q = 0; q < Q; q++) {
       // Adds one to the sum if bit is zero
-      if ((elms[q + thread_offset] & (1 << (b + start_bit))) == 0) {
+      if ((elms[q + thread_offset] & (1 << (b + shift))) == 0) {
         sum += 1;
       }
     }
@@ -160,8 +160,6 @@ __global__ void scatterKer(uint32_t* input,
             histogram_block_scan[bi] += t;
         }
     }
-
-
 
     // Up sweep: (4 := B)
     // for (int d = 0; d <= 4; d = 1 << d) { //change 2 to log og B
@@ -213,7 +211,7 @@ __global__ void scatterKer(uint32_t* input,
     for (int q = 0; q < Q; q++) {
         // Adds one to the sum if bit is zero
         uint32_t elm = elms[q + thread_offset];
-        if ((elm & (1 << (b + start_bit))) == 0) {
+        if ((elm & (1 << (b + shift))) == 0) {
           sum += 1;
           elms_shared[sum - 1] = elm;
         } else {
@@ -230,29 +228,22 @@ __global__ void scatterKer(uint32_t* input,
     __syncthreads();
     
   }
-  // for (int q = 0; q < Q; q++) {
-  //   uint32_t idx = q + block_start + thread_offset;
-  //   if (idx < N) {
-  //     output[idx] = elms[q + thread_offset];
-  //   }
-  // }
-  // return;
   
   // for (int q = 0; q < Q; q++) {
   //   uint32_t idx = q + block_start + thread_offset;
   //   if (idx < N) {
-  //     output[idx] = elms[q + thread_offset];
+  //     int bucket = (elms[q + thread_offset] >> shift) & ((1 << NUM_BITS) - 1);
+  //     int pos = histogram_scan[H * blockIdx.x + bucket] - histogram_sgm_scan[H * blockIdx.x + bucket] + thread_offset + q;
+  //     output[idx] = histogram_scan[H * blockIdx.x + bucket] - histogram_sgm_scan[H * blockIdx.x + bucket] + thread_offset + q; //elms[q + thread_offset];
   //   }
   // }
   // return;
 
-
   // Scatter
-  for (int q = 0; q < Q; q++) {
-    uint32_t bin = elms[thread_offset + q];
-    
+  for (int q = thread_offset; q < thread_offset + Q; q++) {
+    int bucket = (elms[q] >> shift) & ((1 << NUM_BITS) - 1);
     //Find final position
-    int pos = histogram_scan[(1 << bits) * blockIdx.x + bin] - histogram_sgm_scan[(1 << bits) * blockIdx.x + bin] + (q + threadIdx.x * Q);
-    output[pos] = elms[thread_offset + q];
+    int pos = histogram_scan[H * blockIdx.x + bucket] - histogram_sgm_scan[H * blockIdx.x + bucket] + q;
+    output[pos] = elms[q];
   }
 }
