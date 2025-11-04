@@ -125,7 +125,7 @@ int main(int argc, char** argv) {
     cudaMemset(d_hist, 0, hist_mem_size);
     cudaMemset(d_hist_scan, 0, hist_mem_size);
     cudaMemset(d_hist_sgm_scan, 0, hist_mem_size);
-    cudaMemset(d_flag, 0, hist_mem_size);
+    cudaMemset(d_flag, 0, N * sizeof(char));
     cudaMemcpy(d_in_ref, h_in_ref, mem_size, cudaMemcpyHostToDevice);
     cudaMemset(d_out_ref, 0, mem_size);
     
@@ -165,7 +165,7 @@ int main(int argc, char** argv) {
         cudaMemset(d_hist, 0, hist_mem_size);
         cudaMemset(d_hist_scan, 0, hist_mem_size);
         cudaMemset(d_hist_sgm_scan, 0, hist_mem_size);
-        cudaMemset(d_flag, 0, hist_mem_size);
+        cudaMemset(d_flag, 0, N * sizeof(char));
         mask = (1 << NUM_BITS) - 1; // 4 bits = 0xF for radix 16
         gettimeofday(&t_start, NULL);
 
