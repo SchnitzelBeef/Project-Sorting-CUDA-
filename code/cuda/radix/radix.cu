@@ -178,7 +178,7 @@ int main(int argc, char** argv) {
         for (int r = 0; r < num_passes; r++) { 
             shift = r * NUM_BITS;
 
-            histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, shift, N);
+            histogramKer<<<numblocks, B>>>(d_in, d_hist, shift, N);
             sgmScanIncAddI32(hist_size, d_hist, d_flag, d_hist_sgm_scan);
             
             callTransposeKer<32>(d_hist, d_hist_T, numblocks, H);
