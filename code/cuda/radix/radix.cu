@@ -133,16 +133,14 @@ int main(int argc, char** argv) {
     
     const int W = sizeof(int) * 8; 
     const int num_passes = (W + NUM_BITS - 1) / NUM_BITS;
-    unsigned int mask;
     uint32_t shift;
 
 
     //a small number of dry runs
     printf("==== DRY RUNS ====== \n");
     for(int r = 0; r < 100; r++) {
-        mask = (1 << NUM_BITS) - 1; // 4 bits = 0xF for radix 16
         shift = r * NUM_BITS;
-        histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, shift, N);
+        histogramKer<<<numblocks, B>>>(d_in, d_hist, shift, N);
     }
 
     struct timeval t_start, t_end, t_diff;
@@ -168,13 +166,12 @@ int main(int argc, char** argv) {
         cudaMemset(d_hist_scan, 0, hist_mem_size);
         cudaMemset(d_hist_sgm_scan, 0, hist_mem_size);
         cudaMemset(d_flag, 0, N * sizeof(char));
-        mask = (1 << NUM_BITS) - 1; // 4 bits = 0xF for radix 16
         gettimeofday(&t_start, NULL);
 
         for (int r = 0; r < num_passes; r++) {
             shift = r * NUM_BITS;
 
-            histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, shift, N);
+            histogramKer<<<numblocks, B>>>(d_in, d_hist, shift, N);
             sgmScanIncAddI32(N, d_hist, d_flag, d_hist_sgm_scan);
             
             callTransposeKer<32>(d_hist, d_hist_T, numblocks, H);

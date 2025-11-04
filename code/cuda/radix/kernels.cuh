@@ -3,7 +3,6 @@
 __global__ void
 histogramKer( uint32_t* input
             , uint32_t* histogram // Global set of histograms
-            , uint32_t mask
             , uint32_t shift
             , uint32_t N
 ) {
