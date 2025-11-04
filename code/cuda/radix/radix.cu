@@ -31,18 +31,20 @@ void copyvals(uint32_t* dest, uint32_t* src, const uint32_t N);
 
 void printVerbose(uint32_t* d_hist, uint32_t* d_hist_scan, uint32_t* gpu_res, uint32_t* h_out, uint32_t N, unsigned int numblocks, uint32_t hist_mem_size);
 
+void handleArguments(int argc, char** argv, uint32_t& N, uint32_t& useFile);
+
 void binaryPrinter(int val, unsigned int decimal_points);
 
 int main(int argc, char** argv) {
     // Arg1: N - number of elements (Required)
     // Arg5: flag - use external input file (Optional) Default: 0 (false)
-    uint32_t N = 1000;
+    uint32_t N;
     // Default parameters
     uint32_t Q = 5;
     uint32_t B = 32;
     uint32_t useFile = 0;
     
-    // handleArguments(argc, argv, N, Q, B, NUM_BITS, useFile);
+    handleArguments(argc, argv, N, useFile);
 
     initHwd();
     
@@ -239,43 +241,25 @@ int main(int argc, char** argv) {
     return 0;
 }
 
-// void handleArguments(int argc, char** argv, uint32_t& N, uint32_t& Q, uint32_t& B, uint32_t& NUM_BITS, uint32_t& useFile) {
-//     // Reading the number of elements 
-//     if (argc < 2) { 
-//         printf("Missing N (number of elements) Exiting!\n");
-//         exit(1);
-//     }
+void handleArguments(int argc, char** argv, uint32_t& N, uint32_t& useFile) {
+    // Reading the number of elements 
+    if (argc < 2) { 
+        printf("Missing N (number of elements) Exiting!\n");
+        exit(1);
+    }
     
-//     N = (uint32_t)atoi(argv[1]);
+    N = (uint32_t)atoi(argv[1]);
 
-//     const uint32_t maxN = 500000000;
-//     if(N > maxN) {
-//         printf("N is too big; maximal value is %d. Exiting!\n", maxN);
-//         exit(2);
-//     }
+    const uint32_t maxN = 500000000;
+    if(N > maxN) {
+        printf("N is too big; maximal value is %d. Exiting!\n", maxN);
+        exit(2);
+    }
 
-//     // Optional arguments
-//     if (argc >= 3) {
-//         Q = (uint32_t)atoi(argv[2]);
-//     }
-
-//     if (argc >= 4) {
-//         B = (uint32_t)atoi(argv[3]);
-//     }
-
-//     if (argc >= 5) {
-//         NUM_BITS = (uint32_t)atoi(argv[4]);
-//     }
-
-//     if (argc >= 6) {
-//         useFile = (uint32_t)atoi(argv[5]);
-//     }
-
-//     if (argc >= 7) {
-//         printf("Too many arguments! Exiting!\n");
-//         exit(3);
-//     }
-// }
+    if (argc >= 2) {
+        useFile = (uint32_t)atoi(argv[5]);
+    }
+}
 
 
 template<int T>
