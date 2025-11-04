@@ -107,6 +107,9 @@ __global__ void scatterKer(uint32_t* input,
     if (idx < N) {
       elms[q + thread_offset] = input[idx];
     }
+    else {
+      elms[q + thread_offset] = 0xFFFFFFFF; // Max value so goes to last bucket
+    }
   }
 
   __syncthreads();
@@ -117,8 +120,15 @@ __global__ void scatterKer(uint32_t* input,
     
     for (int q = 0; q < Q; q++) {
       // Adds one to the sum if bit is zero
-      if ((elms[q + thread_offset] & (1 << (b + shift))) == 0) {
-        sum += 1;
+      //if ((elms[q + thread_offset] & (1 << (b + shift))) == 0) {
+      //  sum += 1;
+      //}
+      uint32_t idx = q + block_start + thread_offset;
+      // Only count if within bounds
+      if (idx < N) {
+        if ((elms[q + thread_offset] & (1 << (b + shift))) == 0) {
+          sum += 1;
+        }
       }
     }
 
@@ -209,7 +219,10 @@ __global__ void scatterKer(uint32_t* input,
     
     
     for (int q = 0; q < Q; q++) {
-        // Adds one to the sum if bit is zero
+      // Adds one to the sum if bit is zero
+      uint32_t idx = q + block_start + thread_offset;
+      // Only count if within bounds
+      if (idx < N) {
         uint32_t elm = elms[q + thread_offset];
         if ((elm & (1 << (b + shift))) == 0) {
           sum += 1;
@@ -217,6 +230,7 @@ __global__ void scatterKer(uint32_t* input,
         } else {
           elms_shared[splitpoint + thread_offset + q - sum] = elm;
         } 
+      }
     }
 
     __syncthreads();
@@ -241,9 +255,12 @@ __global__ void scatterKer(uint32_t* input,
 
   // Scatter
   for (int q = thread_offset; q < thread_offset + Q; q++) {
-    int bucket = (elms[q] >> shift) & ((1 << NUM_BITS) - 1);
-    //Find final position
-    int pos = histogram_scan[H * blockIdx.x + bucket] - histogram_sgm_scan[H * blockIdx.x + bucket] + q;
-    output[pos] = elms[q];
+    int idx = q + block_start;
+    if (idx < N) {
+      int bucket = (elms[q] >> shift) & ((1 << NUM_BITS) - 1);
+      //Find final position
+      int pos = histogram_scan[H * blockIdx.x + bucket] - histogram_sgm_scan[H * blockIdx.x + bucket] + q;
+      output[pos] = elms[q];
+    }
   }
 }
