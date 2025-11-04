@@ -7,7 +7,7 @@
 #include "host_skel.cuh"
 #include "helper.h"
 
-#define GPU_RUNS 500
+#define GPU_RUNS 1
 #define NUM_BITS 8 // number of bits processed per pass
 #define H (1 << NUM_BITS) // histogram size or amount of numbers you can make with NUM_BITS bits
 #define VERBOSE false
@@ -41,6 +41,8 @@ void printVerbose(uint32_t* d_hist, uint32_t* d_hist_scan, uint32_t* gpu_res, ui
 void handleArguments(int argc, char** argv, uint32_t& N, uint32_t& useFile);
 
 void binaryPrinter(int val, unsigned int decimal_points);
+
+int validate(uint32_t* h_out, uint32_t* h_out_ref, const uint32_t N);
 
 int main(int argc, char** argv) {
     // Arg1: N - number of elements (Required)
@@ -136,11 +138,12 @@ int main(int argc, char** argv) {
 
 
     //a small number of dry runs
-    // for(int r = 0; r < 100; r++) {
-    //     mask = (1 << NUM_BITS) - 1; // 4 bits = 0xF for radix 16
-    //     shift = r * NUM_BITS;
-    //     histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, shift, N);
-    // }
+    printf("==== DRY RUNS ====== \n");
+    for(int r = 0; r < 100; r++) {
+        mask = (1 << NUM_BITS) - 1; // 4 bits = 0xF for radix 16
+        shift = r * NUM_BITS;
+        histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, shift, N);
+    }
 
     struct timeval t_start, t_end, t_diff;
     // running Cub radix sort for reference
@@ -158,7 +161,6 @@ int main(int argc, char** argv) {
     // We have B threads per block
     // Therefore (numblocks * H) / B blocks are needed
     // (Ceil division)
-    int hist_grid = (numblocks * H + B - 1) / B;
     for (int i = 0; i < GPU_RUNS; i++) {
         cudaMemcpy(d_in, h_in, mem_size, cudaMemcpyHostToDevice);
         cudaMemset(d_out, 0, mem_size);
@@ -170,32 +172,15 @@ int main(int argc, char** argv) {
         gettimeofday(&t_start, NULL);
 
         for (int r = 0; r < num_passes; r++) {
-            //The cpu does the following:
-            //Holds the outer loop over passes (for pass in [0..num_passes))
-            // Calculates mask and shift for each bit group
-            // Launches the three GPU kernels per pass (histogram → scan → scatter) 
-            // Swaps input/output pointers between passes
-
-            // We also need to shift the bits accordingly after masking
             shift = r * NUM_BITS;
 
-            //Allocates global memory buffers on device:
-            // d_in, d_out for the arrays being sorted
-            // d_histograms (size = numBlocks × H)
-            // d_prefixes (prefix sums of histograms)
-            // Performs small global memory resets (e.g. cudaMemset)
-            // Does NOT touch shared or register memory (that’s only inside kernels)
             histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, shift, N);
-
             sgmScanIncAddI32(N, d_hist, d_flag, d_hist_sgm_scan);
             
             callTransposeKer<32>(d_hist, d_hist_T, numblocks, H);
             scanIncAddI32(N, d_hist_T, d_hist_T);
             callTransposeKer<32>(d_hist_T, d_hist_scan, H, numblocks);
-
-            //H * sizeof(uint32_t)
             scatterKer<<<numblocks, B>>>(d_in, d_hist_scan, d_hist_sgm_scan, d_out, N, NUM_BITS, r * NUM_BITS);
-
 
             // swap input and output arrays
             uint32_t* temp = d_in;
@@ -218,27 +203,34 @@ int main(int argc, char** argv) {
     if (VERBOSE) {
         printVerbose(d_hist, d_hist_scan, gpu_res, h_out, N, numblocks, hist_mem_size);
     }
+    
 
     // Verify correctness against Cub result
     cudaMemcpy(h_out_ref, d_out_ref, mem_size, cudaMemcpyDeviceToHost);
-    bool validated = true;
-    for (int i = 0; i < N; i++) {
-        if (h_out[i] != h_out_ref[i]) {
-            validated = false;
-            break;
-        }
+
+    for (int i = 0; i<N; i++) {
+        printf("%u ", h_out[i]);
+        printf("%u ", h_out_ref[i]);
     }
+
+
+    bool validated = validate(h_out, h_out_ref, N);    
 
     if (validated) {
         printf("VALIDATED: Result matches CUB result\n");
     } else {
-        printf("DID NOT VALIDATE: Result dont match CUB result!\nEXITING!\n");
-        return 4;
+        validated = validate(h_in, h_out_ref, N);
+        if (validated) {
+            printf("VALIDATED: Result matches CUB result (after even number of passes)\n");
+        } else {
+            printf("DID NOT VALIDATE: Result dont match CUB result!\nEXITING!\n");
+            return 4;
+        }
     }
 
     printf("====\n");
     printf("CUB Radix Sort Time: %lu microseconds\n", elapsed_cub);
-    printf("CUDA Radix Sort Time: %lu microseconds\n", elapsed_cuda);
+    printf("CUDA Radix Sort Time: %lu microseconds\n", elapsed_cuda);   
     printf("====\n");
     
     // clean-up memory
@@ -261,6 +253,14 @@ int main(int argc, char** argv) {
     return 0;
 }
 
+int validate(uint32_t* h_out, uint32_t* h_out_ref, const uint32_t N) {
+    for (uint32_t i = 0; i < N; i++) {
+        if (h_out[i] != h_out_ref[i]) {
+            return 0; // Not valid
+        }
+    }
+    return 1; // Valid
+}
 
 // Modified from assignment 2:
 void scanIncAddI32(const size_t N, uint32_t* d_in, uint32_t* d_out) {
@@ -279,13 +279,14 @@ void scanIncAddI32(const size_t N, uint32_t* d_in, uint32_t* d_out) {
 // Modified from assignment 2:
 void sgmScanIncAddI32(const size_t   N     // length of the input array
                     , uint32_t* d_inp           // device input  of size: N * sizeof(int)
-                    , char* d_flags           // flag array of size: N * sizeof(int)
+                    , char* d_flags             // device flag array of size: N * sizeof(int)
                     , uint32_t* d_out           // device result of size: N * sizeof(int)
 ) {
     uint32_t*  d_tmp_vals;
     char* d_tmp_flag;
     char* d_inp_flag;
     char* h_inp_flag = (char*)malloc(N);
+
     cudaMalloc((void**)&d_tmp_vals, MAX_BLOCK*sizeof(int));
     cudaMalloc((void**)&d_tmp_flag, MAX_BLOCK*sizeof(char));
     cudaMalloc((void**)&d_inp_flag, N * sizeof(char));
@@ -293,12 +294,13 @@ void sgmScanIncAddI32(const size_t   N     // length of the input array
 
     for(uint32_t i = 0; i < N; i++) {
         if (i % H == 0) {
-            d_flags[i] = 1;
+            h_inp_flag[i] = 1;
         } else {
-            d_flags[i] = 0;
+            h_inp_flag[i] = 0;
         }
     }
 
+    cudaMemcpy(d_flags, h_inp_flag, N * sizeof(char), cudaMemcpyHostToDevice);
     sgmScanInc< Add<uint32_t> >( B, N, d_out, d_flags, d_inp, d_tmp_vals, d_tmp_flag);
 
     free(h_inp_flag);
