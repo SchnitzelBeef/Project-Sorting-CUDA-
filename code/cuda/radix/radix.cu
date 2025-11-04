@@ -103,7 +103,7 @@ int main(int argc, char** argv) {
     uint32_t* d_hist;
     uint32_t* d_hist_scan;
     uint32_t* d_hist_sgm_scan;
-    char* d_hist_flag;
+    char* d_flag;
     uint32_t* d_tmp; //REMOVE ME later (only used for shifting)
     uint32_t* d_in_ref;
     uint32_t* d_out_ref;
@@ -113,7 +113,7 @@ int main(int argc, char** argv) {
     cudaMalloc((void**)&d_hist, hist_mem_size);
     cudaMalloc((void**)&d_hist_scan, hist_mem_size);
     cudaMalloc((void**)&d_hist_sgm_scan, hist_mem_size);
-    cudaMalloc((void**)&d_hist_flag, numblocks * H * sizeof(char));
+    cudaMalloc((void**)&d_flag, N * sizeof(char));
     cudaMalloc((void**)&d_tmp, MAX_BLOCK*sizeof(uint32_t));
     cudaMalloc((void**)&d_in_ref,  mem_size);
     cudaMalloc((void**)&d_out_ref, mem_size);
@@ -125,7 +125,7 @@ int main(int argc, char** argv) {
     cudaMemset(d_hist, 0, hist_mem_size);
     cudaMemset(d_hist_scan, 0, hist_mem_size);
     cudaMemset(d_hist_sgm_scan, 0, hist_mem_size);
-    cudaMemset(d_hist_flag, 0, hist_mem_size);
+    cudaMemset(d_flag, 0, hist_mem_size);
     cudaMemcpy(d_in_ref, h_in_ref, mem_size, cudaMemcpyHostToDevice);
     cudaMemset(d_out_ref, 0, mem_size);
     
@@ -165,7 +165,7 @@ int main(int argc, char** argv) {
         cudaMemset(d_hist, 0, hist_mem_size);
         cudaMemset(d_hist_scan, 0, hist_mem_size);
         cudaMemset(d_hist_sgm_scan, 0, hist_mem_size);
-        cudaMemset(d_hist_flag, 0, hist_mem_size);
+        cudaMemset(d_flag, 0, hist_mem_size);
         mask = (1 << NUM_BITS) - 1; // 4 bits = 0xF for radix 16
         gettimeofday(&t_start, NULL);
 
@@ -187,7 +187,7 @@ int main(int argc, char** argv) {
             // Does NOT touch shared or register memory (that’s only inside kernels)
             histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, shift, N);
 
-            sgmScanIncAddI32(N, d_hist, d_hist_flag, d_hist_sgm_scan);
+            sgmScanIncAddI32(N, d_hist, d_flag, d_hist_sgm_scan);
             
             callTransposeKer<32>(d_hist, d_hist_T, numblocks, H);
             scanIncAddI32(N, d_hist_T, d_hist_T);
@@ -252,7 +252,7 @@ int main(int argc, char** argv) {
     cudaFree(d_hist);
     cudaFree(d_hist_scan);
     cudaFree(d_hist_sgm_scan);
-    cudaFree(d_hist_flag);
+    cudaFree(d_flag);
     cudaFree(d_tmp);
     cudaFree(d_in_ref);
     cudaFree(d_out_ref);
