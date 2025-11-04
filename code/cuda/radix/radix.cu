@@ -7,24 +7,19 @@
 #include "host_skel.cuh"
 #include "helper.h"
 
-#define GPU_RUNS 1
-#define NUM_BITS 4 // number of bits processed per pass
+#define GPU_RUNS 300
+#define NUM_BITS 8 // number of bits processed per pass
 #define H (1 << NUM_BITS) // histogram size or amount of numbers you can make with NUM_BITS bits
 #define VERBOSE false
 
-#define Q 4
-#define B 8
+#define Q 22
+#define B 256
 
 #include "kernels.cuh"
 
 //void handleArguments(int argc, char** argv, uint32_t& N, uint32_t& Q, uint32_t& B, uint32_t& NUM_BITS, uint32_t& useFile);
 
-void cubRadixSort(uint32_t* d_in, uint32_t* d_out, size_t N, timeval& t_start, timeval& t_end);
-
-// void scanExcAddI32(const size_t N, uint32_t* d_in, uint32_t* d_out);
-
-void scanIncAddI32(const size_t N, uint32_t* d_in, uint32_t* d_out);
-
+void cubRadixSort(cub::DoubleBuffer<uint32_t>& d_keys, size_t N, timeval& t_start, timeval& t_end);
 
 template<int T>
 void callTransposeKer(uint32_t* inp_d, uint32_t* out_d, const uint32_t height, const uint32_t width);
@@ -41,7 +36,7 @@ void handleArguments(int argc, char** argv, uint32_t& N, uint32_t& useFile);
 
 void binaryPrinter(int val, unsigned int decimal_points);
 
-int validate(uint32_t* h_out, uint32_t* h_out_ref, const uint32_t N);
+int comp(const void *a, const void *b);
 
 int main(int argc, char** argv) {
     // Arg1: N - number of elements (Required)
@@ -55,7 +50,7 @@ int main(int argc, char** argv) {
     initHwd();
     
     // use the first CUDA device:
-    cudaSetDevice(1);
+    cudaSetDevice(0);
     
     unsigned int numblocks = (N + (Q * B - 1)) / (Q * B);
     uint32_t mem_size = N * sizeof(uint32_t);
@@ -110,14 +105,9 @@ int main(int argc, char** argv) {
     uint32_t* d_hist_scan;
     uint32_t* d_hist_sgm_scan;
     char* d_flags;
-    uint32_t* d_tmp; //REMOVE ME later (only used for shifting)
-    uint32_t* d_in_ref;
-    uint32_t* d_out_ref;
     uint32_t* d_hist_T; // Transposed histogram
     uint32_t*  d_tmp_vals; // temporary values for flag
     char* d_tmp_flag;      // flag temporary values
-
-    
     
     cudaMalloc((void**)&d_in,  mem_size);
     cudaMalloc((void**)&d_out, mem_size);
@@ -125,12 +115,9 @@ int main(int argc, char** argv) {
     cudaMalloc((void**)&d_hist_scan, hist_mem_size);
     cudaMalloc((void**)&d_hist_sgm_scan, hist_mem_size);
     cudaMalloc((void**)&d_flags, numblocks * H * sizeof(char));
-    cudaMalloc((void**)&d_tmp, MAX_BLOCK*sizeof(uint32_t));
-    cudaMalloc((void**)&d_in_ref,  mem_size);
-    cudaMalloc((void**)&d_out_ref, mem_size);
     cudaMalloc((void**)&d_hist_T, hist_mem_size);
-    cudaMalloc((void**)&d_tmp_vals, MAX_BLOCK*sizeof(int)); // temporary values for flag
-    cudaMalloc((void**)&d_tmp_flag, MAX_BLOCK*sizeof(char)); // flag temporary values
+    cudaMalloc((void**)&d_tmp_vals, MAX_BLOCK*sizeof(int)); // memory used for scan and sgm scan
+    cudaMalloc((void**)&d_tmp_flag, MAX_BLOCK*sizeof(char)); // memory used for flag array in sgm scan
 
     // copy host memory to device
     cudaMemcpy(d_in, h_in, mem_size, cudaMemcpyHostToDevice);
@@ -139,15 +126,11 @@ int main(int argc, char** argv) {
     cudaMemset(d_hist_scan, 0, hist_mem_size);
     cudaMemset(d_hist_sgm_scan, 0, hist_mem_size);
     cudaMemset(d_flags, 0, numblocks * H * sizeof(char));
-    cudaMemcpy(d_in_ref, h_in, mem_size, cudaMemcpyHostToDevice);
-    cudaMemset(d_out_ref, 0, mem_size);
 
     //Set flag array once:
-
     for(uint32_t i = 0; i < numblocks * H; i += H) {
         h_inp_flag[i] = 1;
     }
-    printf("\n");
     cudaMemcpy(d_flags, h_inp_flag, numblocks * H * sizeof(char), cudaMemcpyHostToDevice);
     
     const int W = sizeof(int) * 8; 
@@ -156,24 +139,29 @@ int main(int argc, char** argv) {
     uint32_t shift;
 
     //a small number of dry runs
-    printf("==== DRY RUNS ====== \n");
-    for(int r = 0; r < 100; r++) {
-        mask = (1 << NUM_BITS) - 1; // 4 bits = 0xF for radix 16
-        shift = r * NUM_BITS;
-        histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, shift, N);
-    }
+    // printf("==== DRY RUNS ====== \n");
+    // for(int r = 0; r < 100; r++) {
+    //     mask = (1 << NUM_BITS) - 1; // 4 bits = 0xF for radix 16
+    //     shift = r * NUM_BITS;
+    //     histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, shift, N);
+    // }
 
     struct timeval t_start, t_end, t_diff;
-    // running Cub radix sort for reference
+
+    // running Cub radix sort for reference (DOES NOT SEEM TO WORK)
     uint64_t elapsed_cub = 0.0;
-    for (int i = 0; i < GPU_RUNS; i++) {
-        cubRadixSort(d_in_ref, d_out_ref, N, t_start, t_end);
-        timeval_subtract(&t_diff, &t_end, &t_start);
-        elapsed_cub += (t_diff.tv_sec*1e6+t_diff.tv_usec);
-    }
-    elapsed_cub /= GPU_RUNS;
-    // Verify correctness against Cub result
-    cudaMemcpy(h_out_ref, d_out_ref, mem_size, cudaMemcpyDeviceToHost);
+    // cub::DoubleBuffer<uint32_t> d_keys(d_in, d_out);
+    // for (int i = 0; i < GPU_RUNS; i++) {
+    //     cubRadixSort(d_keys, N, t_start, t_end);
+    //     timeval_subtract(&t_diff, &t_end, &t_start);
+    //     elapsed_cub += (t_diff.tv_sec * 1e6 + t_diff.tv_usec);
+    // }
+    // elapsed_cub /= GPU_RUNS;
+    // cudaMemcpy(h_out_ref, d_keys.Current(), N * sizeof(uint32_t), cudaMemcpyDeviceToHost);
+
+    // Temporary qsort just so we can validate
+    memcpy(h_out_ref, h_in, N*sizeof(uint32_t));
+    qsort(h_out_ref, N, sizeof(uint32_t), comp);
 
     // timing the GPU computation
     uint64_t elapsed_cuda = 0.0;
@@ -198,7 +186,7 @@ int main(int argc, char** argv) {
             sgmScanInc< Add<uint32_t> >( B, numblocks * H, d_hist_sgm_scan, d_flags, d_hist, d_tmp_vals, d_tmp_flag);
 
             callTransposeKer<32>(d_hist, d_hist_T, numblocks, H);
-            scanIncAddI32(numblocks * H, d_hist_T, d_hist_T);
+            scanInc<Add<uint32_t>> ( B, numblocks * H, d_hist_T, d_hist_T, d_tmp_vals);
             callTransposeKer<32>(d_hist_T, d_hist_scan, H, numblocks);
             scatterKer<<<numblocks, B>>>(d_in, d_hist_scan, d_hist_sgm_scan, d_out, N, NUM_BITS, shift);
             
@@ -232,29 +220,31 @@ int main(int argc, char** argv) {
     cudaMemcpy(h_out, d_in, mem_size, cudaMemcpyDeviceToHost);
     
     // Print result (REMOVE ME LATER)
-    printf("\nRadix - CUB\n");
-    for (int i = 0; i < N; i++) {
-        printf("%u - %u", h_out[i], h_out_ref[i]);
-        printf("\n");
-    }    
-    
-
-    bool validated = validate(h_out, h_out_ref, N);    
-
-    if (validated) {
-        printf("\nVALIDATED: Result matches CUB result\n");
-    } else {
-        validated = validate(h_in, h_out_ref, N);
-        if (validated) {
-            printf("\nVALIDATED: Result matches CUB result (after even number of passes)\n");
-        } else {
-            printf("\nDID NOT VALIDATE: Result dont match CUB result!\nEXITING!\n");
-            return 4;
-        }
+    if (VERBOSE) {
+        printf("\n\n ------- RESULTS ------- \n\nRadix - qsort \n");
+        for (int i = 0; i < N; i++) {
+            printf("%10u - %10u", h_out[i], h_out_ref[i]);
+            printf("\n");
+        }    
     }
+    
+    if (!validateExact(h_out, h_out_ref, N)) return 4;
+
+    // if (validated) {
+    //     printf("\nVALIDATED: Result matches CUB result\n");
+    // } else {
+    //     printf("\nDID NOT VALIDATE: Result dont match CUB result!\nEXITING!\n");
+    //     validated = validate(h_in, h_out_ref, N);
+    //     if (validated) {
+    //         printf("\nVALIDATED: Result matches CUB result (after even number of passes)\n"); 
+    //     } else {
+    //         printf("\nDID NOT VALIDATE: Result dont match CUB result!\nEXITING!\n");
+    //         return 4;
+    //     }
+    // }
 
     printf("====\n");
-    printf("CUB Radix Sort Time: %lu microseconds\n", elapsed_cub);
+    printf("CUB Radix Sort Time (not correct): %lu microseconds\n", elapsed_cub);
     printf("CUDA Radix Sort Time: %lu microseconds\n", elapsed_cuda);   
     printf("====\n");
     
@@ -268,9 +258,6 @@ int main(int argc, char** argv) {
     cudaFree(d_hist);
     cudaFree(d_hist_scan);
     cudaFree(d_hist_sgm_scan);
-    cudaFree(d_tmp);
-    cudaFree(d_in_ref);
-    cudaFree(d_out_ref);
     cudaFree(d_hist_T);
     
     //Free flag memory:
@@ -281,29 +268,13 @@ int main(int argc, char** argv) {
     return 0;
 }
 
-int validate(uint32_t* h_out, uint32_t* h_out_ref, const uint32_t N) {
-    for (uint32_t i = 0; i < N; i++) {
-        if (h_out[i] != h_out_ref[i]) {
-            return 0; // Not valid
-        }
-    }
-    return 1; // Valid
+// Temporary comparator function for temporary qsort
+// (overflow/underflow safe)
+int comp(const void *a, const void *b) {
+    uint32_t arg1 = *(const uint32_t*)a;
+    uint32_t arg2 = *(const uint32_t*)b;
+    return (arg1 > arg2) - (arg1 < arg2);
 }
-
-// Modified from assignment 2:
-void scanIncAddI32(const size_t N, uint32_t* d_in, uint32_t* d_out) {
-    // B: Desired CUDA block size (<= 1024, multiple of 32)
-    // N: Length of the input array
-    // d_in: Device input of size: N * sizeof(uint32_t)
-    // d_out: device result of size: N * sizeof(uint32_t)
-    uint32_t* d_tmp;
-    cudaMalloc((void**)&d_tmp, MAX_BLOCK*sizeof(uint32_t));
-
-    scanInc<Add<uint32_t>> ( B, N, d_out, d_in, d_tmp );
-
-    cudaFree(d_tmp);
-}
-
 
 void handleArguments(int argc, char** argv, uint32_t& N, uint32_t& useFile) {
     // Reading the number of elements 
@@ -434,16 +405,17 @@ void copyvals(uint32_t* dest, uint32_t* src, const uint32_t N) {
 // Taken from CUB library examples
 // https://nvidia.github.io/cccl/cub/api/structcub_1_1DeviceRadixSort.html
 
-void cubRadixSort(uint32_t* d_in, uint32_t* d_out, size_t N, timeval& t_start, timeval& t_end) {
+void cubRadixSort(cub::DoubleBuffer<uint32_t>& d_keys, size_t N, timeval& t_start, timeval& t_end) {
+
     //temporary storage
     void     *d_temp_storage = NULL;
     size_t   temp_storage_bytes = 0;
-    cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, d_in, d_out, N);
+    cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, d_keys, N);
     cudaMalloc(&d_temp_storage, temp_storage_bytes);
 
     // sorting operation
     gettimeofday(&t_start, NULL);
-    cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, d_in, d_out, N);
+    cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, d_keys, N);
     cudaDeviceSynchronize();
     gettimeofday(&t_end, NULL);
 

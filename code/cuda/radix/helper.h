@@ -53,7 +53,7 @@ template<class T>
 bool validateExact(T* A, T* B, uint64_t sizeAB){
     for(uint64_t i = 0; i < sizeAB; i++) {
         if ( A[i] != B[i] ) {
-            printf("INVALID RESULT at flat index %llu: %f vs %f\n", i, (float)A[i], (float)B[i]);
+            printf("INVALID RESULT at flat index %llu: %u vs %u\n", i, (float)A[i], (float)B[i]);
             return false;
         }
     }
