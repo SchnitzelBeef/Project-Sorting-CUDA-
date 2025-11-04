@@ -5,9 +5,7 @@ histogramKer( uint32_t* input
             , uint32_t* histogram // Global set of histograms
             , uint32_t mask
             , uint32_t shift
-            , uint32_t Q
             , uint32_t N
-
 ) {
 
   // Shared memory buffer
@@ -43,7 +41,7 @@ histogramKer( uint32_t* input
 // each block transposes a square T
 template <int T> 
 __global__ void
-coalsTransposeKer(uint32_t* A, uint32_t* B, int heightA, int widthA) {
+coalsTransposeKer(uint32_t* A, uint32_t* C, int heightA, int widthA) {
   __shared__ uint32_t tile[T][T+1];
 
   int x = blockIdx.x * T + threadIdx.x;
@@ -58,7 +56,7 @@ coalsTransposeKer(uint32_t* A, uint32_t* B, int heightA, int widthA) {
   y = blockIdx.x * T + threadIdx.y;
 
   if( x < heightA && y < widthA )
-      B[y*heightA + x] = tile[threadIdx.x][threadIdx.y];
+      C[y*heightA + x] = tile[threadIdx.x][threadIdx.y];
 }
 
 // Temporary fix to make scan exclusive and not inclusive 
@@ -86,7 +84,6 @@ shiftKer(uint32_t* input
 __global__ void scatterKer(uint32_t* input,
                            uint32_t* histogram_scan,
                            uint32_t* output,
-                           uint32_t Q,
                            uint32_t N,
                            uint32_t mask,
                            uint32_t shift) {

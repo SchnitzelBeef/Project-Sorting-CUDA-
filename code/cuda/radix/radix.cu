@@ -4,21 +4,24 @@
 #include <math.h>
 #include <cuda_runtime.h>
 #include <cub/cub.cuh>
+#include "host_skel.cuh"
+#include "helper.h"
 
 #define GPU_RUNS 500
 #define NUM_BITS 8 // number of bits processed per pass
 #define H (1 << NUM_BITS) // histogram size or amount of numbers you can make with NUM_BITS bits
-#define VERBOSE true
+#define VERBOSE false
 
-#include "host_skel.cuh"
-#include "helper.h"
+#define Q 23
+#define B 32
+
 #include "kernels.cuh"
 
 //void handleArguments(int argc, char** argv, uint32_t& N, uint32_t& Q, uint32_t& B, uint32_t& NUM_BITS, uint32_t& useFile);
 
 void cubRadixSort(uint32_t* d_in, uint32_t* d_out, size_t N, timeval& t_start, timeval& t_end);
 
-void scanExcAddI32(const uint32_t B, const size_t N, uint32_t* d_in, uint32_t* d_out);
+void scanExcAddI32(const size_t N, uint32_t* d_in, uint32_t* d_out);
 
 template<int T>
 void callTransposeKer(uint32_t* inp_d, uint32_t* out_d, const uint32_t height, const uint32_t width);
@@ -40,8 +43,6 @@ int main(int argc, char** argv) {
     // Arg5: flag - use external input file (Optional) Default: 0 (false)
     uint32_t N;
     // Default parameters
-    uint32_t Q = 5;
-    uint32_t B = 32;
     uint32_t useFile = 0;
     
     handleArguments(argc, argv, N, useFile);
@@ -105,7 +106,7 @@ int main(int argc, char** argv) {
     cudaMalloc((void**)&d_out, mem_size);
     cudaMalloc((void**)&d_hist, hist_mem_size);
     cudaMalloc((void**)&d_hist_scan, hist_mem_size);
-    cudaMalloc((void**)&d_tmp, hist_mem_size);
+    cudaMalloc((void**)&d_tmp, MAX_BLOCK*sizeof(uint32_t));
     cudaMalloc((void**)&d_in_ref,  mem_size);
     cudaMalloc((void**)&d_out_ref, mem_size);
     cudaMalloc((void**)&d_hist_T, hist_mem_size);
@@ -118,15 +119,18 @@ int main(int argc, char** argv) {
     cudaMemcpy(d_in_ref, h_in_ref, mem_size, cudaMemcpyHostToDevice);
     cudaMemset(d_out_ref, 0, mem_size);
     
-    // a small number of dry runs
-    // for(int r = 0; r < 1; r++) {
-    //     dim3 block(B, 1, 1), grid(numblocks, 1, 1);
-    //     histogramKer<<< grid, block>>>(d_in, d_hist, mask, Q, N);
-    // }
     const int W = sizeof(int) * 8; 
     const int num_passes = (W + NUM_BITS - 1) / NUM_BITS;
     unsigned int mask;
+    uint32_t shift;
 
+
+    //a small number of dry runs
+    for(int r = 0; r < 100; r++) {
+        mask = (1 << NUM_BITS) - 1; // 4 bits = 0xF for radix 16
+        shift = r * NUM_BITS;
+        histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, shift, N);
+    }
 
     struct timeval t_start, t_end, t_diff;
     // running Cub radix sort for reference
@@ -145,7 +149,6 @@ int main(int argc, char** argv) {
     // Therefore (numblocks * H) / B blocks are needed
     // (Ceil division)
     int hist_grid = (numblocks * H + B - 1) / B;
-    uint32_t shift;
     for (int i = 0; i < GPU_RUNS; i++) {
         cudaMemcpy(d_in, h_in, mem_size, cudaMemcpyHostToDevice);
         cudaMemset(d_out, 0, mem_size);
@@ -170,13 +173,13 @@ int main(int argc, char** argv) {
             // d_prefixes (prefix sums of histograms)
             // Performs small global memory resets (e.g. cudaMemset)
             // Does NOT touch shared or register memory (that’s only inside kernels)
-            histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, shift, Q, N);
+            histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, shift, N);
             
             callTransposeKer<32>(d_hist, d_hist_T, numblocks, H);
-            scanExcAddI32(B, numblocks * H, d_hist_T, d_hist_T);
+            scanExc<Add<uint32_t>> (B, numblocks * H, d_hist_T, d_hist_T, d_tmp );
             callTransposeKer<32>(d_hist_T, d_hist_scan, H, numblocks);
             
-            scatterKer<<<numblocks, B>>>(d_in, d_hist_scan, d_out, Q, N, mask, shift);
+            scatterKer<<<numblocks, B>>>(d_in, d_hist_scan, d_out, N, mask, shift);
             cudaDeviceSynchronize();
 
             // swap input and output arrays
@@ -277,20 +280,6 @@ void callTransposeKer(uint32_t* inp_d, uint32_t* out_d, const uint32_t height, c
     coalsTransposeKer<T> <<< grid, block >>>(inp_d, out_d, height, width);
 }
 
-// Modified From assignment 2:
-void scanExcAddI32(const uint32_t B, const size_t N, uint32_t* d_in, uint32_t* d_out) {
-    // B: Desired CUDA block size (<= 1024, multiple of 32)
-    // N: Length of the input array
-    // d_in: Device input of size: N * sizeof(uint32_t)
-    // d_out: device result of size: N * sizeof(uint32_t)
-    uint32_t* d_tmp;
-    cudaMalloc((void**)&d_tmp, MAX_BLOCK*sizeof(uint32_t));
-
-    scanExc<Add<uint32_t>> ( B, N, d_out, d_in, d_tmp );
-
-    cudaFree(d_tmp);
-}
-
 void getInputFromFile(const char* filename, uint32_t* h_in, const uint32_t N) {
     FILE* f = fopen(filename, "r");
     if (f == NULL) {
@@ -339,7 +328,7 @@ void printVerbose(uint32_t* d_hist, uint32_t* d_hist_scan, uint32_t* gpu_res, ui
     // Print result array
     printf("\n\n-- Result -- ");
     for (int i = 0; i < N; i++) {
-        printf("%d ", h_out[i]);
+        printf("%u ", h_out[i]);
     }
 }
 
