@@ -72,9 +72,6 @@ int main(int argc, char** argv) {
     uint32_t* h_out = (uint32_t*) malloc(mem_size);
     uint32_t* gpu_res = (uint32_t*) malloc(hist_mem_size); // This can be removed later
     uint32_t* h_out_ref = (uint32_t*) malloc(mem_size);
-    // Flag memory
-    char* h_inp_flag = (char*)malloc(numblocks * H);
-    memset(h_inp_flag, 0, numblocks * H);
 
     // initialize the memory
     if (useFile) {
@@ -126,12 +123,6 @@ int main(int argc, char** argv) {
     cudaMemset(d_hist_scan, 0, hist_mem_size);
     cudaMemset(d_hist_sgm_scan, 0, hist_mem_size);
     cudaMemset(d_flags, 0, numblocks * H * sizeof(char));
-
-    //Set flag array once:
-    for(uint32_t i = 0; i < numblocks * H; i += H) {
-        h_inp_flag[i] = 1;
-    }
-    cudaMemcpy(d_flags, h_inp_flag, numblocks * H * sizeof(char), cudaMemcpyHostToDevice);
     
     const int W = sizeof(int) * 8; 
     const int num_passes = (W + NUM_BITS - 1) / NUM_BITS;
@@ -142,6 +133,7 @@ int main(int argc, char** argv) {
     printf("==== DRY RUN ====== \n");
     { // dry run to manifest the allocations in memory
         histogramKer<<<numblocks, B>>>(d_in, d_hist, 0, 0, N);
+        createFlagKer<<<numblocks, B>>>(d_flags, N);
         sgmScanInc< Add<uint32_t> >( B, numblocks * H, d_hist_sgm_scan, d_flags, d_hist, d_tmp_vals, d_tmp_flag);
         callTransposeKer<32>(d_hist, d_hist_T, numblocks, H);
         scanInc<Add<uint32_t>> ( B, numblocks * H, d_hist_T, d_hist_T, d_tmp_vals);
@@ -153,14 +145,18 @@ int main(int argc, char** argv) {
 
     // running Cub radix sort for reference (DOES NOT SEEM TO WORK)
     uint64_t elapsed_cub = 0.0;
-    // cub::DoubleBuffer<uint32_t> d_keys(d_in, d_out);
-    // for (int i = 0; i < GPU_RUNS; i++) {
-    //     cubRadixSort(d_keys, N, t_start, t_end);
-    //     timeval_subtract(&t_diff, &t_end, &t_start);
-    //     elapsed_cub += (t_diff.tv_sec * 1e6 + t_diff.tv_usec);
-    // }
-    // elapsed_cub /= GPU_RUNS;
-    // cudaMemcpy(h_out_ref, d_keys.Current(), N * sizeof(uint32_t), cudaMemcpyDeviceToHost);
+    cub::DoubleBuffer<uint32_t> d_keys(d_in, d_out);
+    { // Dry run for CUB
+        cubRadixSort(d_keys, N, t_start, t_end);
+    }
+    for (int i = 0; i < GPU_RUNS; i++) {
+        cubRadixSort(d_keys, N, t_start, t_end);
+        timeval_subtract(&t_diff, &t_end, &t_start);
+        elapsed_cub += (t_diff.tv_sec * 1e6 + t_diff.tv_usec);
+    }
+    elapsed_cub /= GPU_RUNS;
+    //cudaMemcpy(h_out_ref, d_keys.Current(), N * sizeof(uint32_t), cudaMemcpyDeviceToHost);
+
 
     // Temporary qsort just so we can validate
     memcpy(h_out_ref, h_in, N*sizeof(uint32_t));
@@ -172,6 +168,7 @@ int main(int argc, char** argv) {
     // We have B threads per block
     // Therefore (numblocks * H) / B blocks are needed
     // (Ceil division)
+    printf("==== %d GPU RUNS ====== \n", GPU_RUNS);
     for (int i = 0; i < GPU_RUNS; i++) {
         cudaMemcpy(d_in, h_in, mem_size, cudaMemcpyHostToDevice);
         cudaMemset(d_out, 0, mem_size);
@@ -186,8 +183,8 @@ int main(int argc, char** argv) {
 
             histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, shift, N);
         
+            createFlagKer<<<numblocks, B>>>(d_flags, N);
             sgmScanInc< Add<uint32_t> >( B, numblocks * H, d_hist_sgm_scan, d_flags, d_hist, d_tmp_vals, d_tmp_flag);
-
             callTransposeKer<32>(d_hist, d_hist_T, numblocks, H);
             scanInc<Add<uint32_t>> ( B, numblocks * H, d_hist_T, d_hist_T, d_tmp_vals);
             callTransposeKer<32>(d_hist_T, d_hist_scan, H, numblocks);
@@ -224,13 +221,14 @@ int main(int argc, char** argv) {
     
     // Print result (REMOVE ME LATER)
     if (VERBOSE) {
-        printf("\n\n ------- RESULTS ------- \n\nRadix - qsort \n");
+        printf("\n ------- RESULTS ------- \n\nRadix - qsort \n");
         for (int i = 0; i < N; i++) {
             printf("%10u - %10u", h_out[i], h_out_ref[i]);
             printf("\n");
         }    
     }
     
+    printf("Against qsort: ");
     if (!validateExact(h_out, h_out_ref, N)) return 4;
 
     // if (validated) {
@@ -264,7 +262,6 @@ int main(int argc, char** argv) {
     cudaFree(d_hist_T);
     
     //Free flag memory:
-    free(h_inp_flag);
     cudaFree(d_flags);
     cudaFree(d_tmp_vals);
     cudaFree(d_tmp_flag);
