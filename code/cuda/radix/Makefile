@@ -22,7 +22,7 @@ $(EXECUTABLE): $(SRC)
 
 
 run: $(EXECUTABLE)
-	./$(EXECUTABLE) $(N) 1
+	./$(EXECUTABLE) $(N) 0
 
 clean:
 	rm -f $(EXECUTABLE)
