@@ -10,11 +10,13 @@
 #define VERBOSE false     // printing for debugging
 #define GPU_RUNS 500      // number of gpu-runs
 
-#define NUM_BITS 8        // number of bits processed per pass
+       
 #define H (1 << NUM_BITS) // histogram size or amount of numbers you can make with NUM_BITS bits
 
 const int Q = RADIX_Q;      // amount of elements each thread processes
 const int B = RADIX_B;      // block size
+const int NUM_BITS = BITS;   // number of bits processed per pass
+
 
 #include "kernels.cuh"
 
@@ -325,7 +327,6 @@ void getInputFromFile(const char* filename, uint32_t* h_in, const uint32_t N) {
     while (count < N && fscanf(f, "%u", &val) == 1) {
         h_in[count++] = val;
 
-        // skip 'u32'
         fscanf(f, "%*c%*c%*c"); // skip u32
 
         // skip optional comma

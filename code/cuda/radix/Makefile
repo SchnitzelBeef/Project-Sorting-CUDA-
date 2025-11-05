@@ -6,6 +6,7 @@ EXECUTABLE = radix
 
 RADIX_Q ?= 22
 RADIX_B ?= 256
+BITS ?= 8 
 N ?= 100000
 
 default: compile run
@@ -17,7 +18,7 @@ default: compile run
 compile: $(EXECUTABLE)
 
 $(EXECUTABLE): $(SRC)
-	$(CXX) -DRADIX_Q=$(RADIX_Q) -DRADIX_B=$(RADIX_B) -o $(EXECUTABLE) $(SRC)
+	$(CXX) -DRADIX_Q=$(RADIX_Q) -DRADIX_B=$(RADIX_B) -DBITS=$(BITS) -o $(EXECUTABLE) $(SRC)
 
 
 run: $(EXECUTABLE)
