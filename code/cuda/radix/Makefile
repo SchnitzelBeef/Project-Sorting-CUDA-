@@ -16,7 +16,7 @@ default: compile run
 compile: $(EXECUTABLE)
 
 $(EXECUTABLE): $(SRC)
-	$(CXX) -DRADIX_Q=$(Q) -DRADIX_B=$(B) -o $(EXECUTABLE) $(SRC)
+	$(CXX) -DRADIX_Q=$(RADIX_Q) -DRADIX_B=$(RADIX_B) -o $(EXECUTABLE) $(SRC)
 
 
 run: $(EXECUTABLE)
