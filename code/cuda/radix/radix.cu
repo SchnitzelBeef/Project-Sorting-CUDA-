@@ -237,7 +237,7 @@ int main(int argc, char** argv) {
     // Timings
     printf("CUB Radix Sort Time (maybe correct): %lu microseconds\n", elapsed_cub);
     printf("CUDA Radix Sort Time: %lu microseconds\n", elapsed_cuda);   
-    printf("CUB speed is CUDA / CUB = %f times faster\n", (double)elapsed_cuda/elapsed_cub);   
+    printf("Speedup: CUDA / CUB = %f times faster\n", (double)elapsed_cuda/elapsed_cub);    
     printf("====\n");
     
     // clean-up memory
