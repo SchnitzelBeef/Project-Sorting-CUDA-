@@ -130,7 +130,7 @@ int main(int argc, char** argv) {
     uint32_t shift;
 
     // dry run to exercise device allocations
-    printf("==== DRY RUN ====== \n");
+    printf("\n==== DRY RUN ====== \n");
     { // dry run to manifest the allocations in memory
         histogramKer<<<numblocks, B>>>(d_in, d_hist, 0, 0, N);
         createFlagKer<<<numblocks, B>>>(d_flags, N);
@@ -244,8 +244,7 @@ int main(int argc, char** argv) {
     //     }
     // }
 
-    printf("====\n");
-    printf("CUB Radix Sort Time (not correct): %lu microseconds\n", elapsed_cub);
+    printf("CUB Radix Sort Time (maybe correct): %lu microseconds\n", elapsed_cub);
     printf("CUDA Radix Sort Time: %lu microseconds\n", elapsed_cuda);   
     printf("====\n");
     
