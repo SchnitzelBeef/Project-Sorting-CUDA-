@@ -1,39 +1,150 @@
+import re
+import random
 import subprocess
 import csv
-import time
+import time, sys
 
-Q_values = [4, 8, 16, 32]
-B_values = [16, 32, 64]
-inputs = [1000, 10000, 100000]
+Q_values = [1, 4, 8, 16, 23, 32]
+B_values = [16, 32, 64, 128, 256]
+inputs = [1000, 100000, 1000000000]
+BITS_values = [2, 4, 8]
+
+CUDA_RADIX_DIR = "../../code/cuda/radix/"
+FUTHARK_DIR = "../futhark"
+TXT_OUTFILE = "../input.txt"
+IN_OUTFILE = "../futhark/input.in"
+
+### Create a .txt and .in based on N ####################
+def generate_input_file(N):
+    
+    data = [random.getrandbits(32) for _ in range(N)]
+
+    with open(TXT_OUTFILE, "w") as f:
+        f.write("[")
+        f.write(", ".join(f"{x}u32" for x in data))
+        f.write("]\n")
+
+    with open(IN_OUTFILE, "w") as f:
+        f.write("[")
+        f.write(", ".join(f"{x}u32" for x in data))
+        f.write("]\n")
+
+    print(f"Generated {N} u32 values in {TXT_OUTFILE} and {IN_OUTFILE}")
+
+## Run radix + cub with given N, Q, B ##########
+def run_radix(N, Q, B, NUM_BITS):
+    cmd = ["make","clean"]
+    subprocess.run(cmd,cwd=CUDA_RADIX_DIR, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    cmd = ["make", f"N={N}", f"RADIX_Q={Q}", f"RADIX_B={B}", f"BITS={NUM_BITS}"]
+    output = subprocess.run(cmd,
+                            cwd=CUDA_RADIX_DIR,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            universal_newlines=True   
+    )
+    cub_t, cuda_t = parse_CUDA_output(output.stdout)
+    return cub_t, cuda_t
+    
+### Extract times from CUDA output ##########n 
+def parse_CUDA_output(output):
+    cub_time = None
+    cuda_time = None
+    validated = False
+
+    for line in output.splitlines():
+        if "VALID RESULT!" in line:
+            validated = True
+        elif "CUB Radix Sort Time" in line:
+            cub_time = int(line.split(":")[1].strip().split()[0])
+        elif "CUDA Radix Sort Time" in line:
+            cuda_time = int(line.split(":")[1].strip().split()[0])
+        
+
+    if not validated:
+        return ("ERR", "ERR")
+
+    return cub_time, cuda_time
+
+
+### Run futhark benchmark ######################
+def run_futhark():
+    cmd = ["make", "clean"]
+    subprocess.run(cmd,cwd=FUTHARK_DIR, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    cmd = ["make", "bench"]
+    output = subprocess.run(cmd,
+                            cwd=FUTHARK_DIR,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            universal_newlines=True   
+    )
+    futhark_t = parse_futhark_time(output.stdout)
+    return futhark_t
+
+
+### Extract futhark time from output ##########
+def parse_futhark_time(output) :
+    # Find a number followed by μs
+    match = re.search("([\d\.]+)\s*μs", output)
+    if match:
+        return float(match.group(1))
+    else:
+        raise ValueError("Runtime not found in output")
+    
+
+total = len(inputs) * len(Q_values) * len(B_values) * len(BITS_values)
+done = 0
+start_time = time.time()
+
+def print_status():
+    elapsed = time.time() - start_time
+    rate = done / elapsed if elapsed > 0 else 0
+    remaining = (total - done) / rate if rate > 0 else 0
+
+    sys.stdout.write(
+        f"\rProgress: {done}/{total} "
+        f"({done/total*100:5.1f}%) "
+        f"| Elapsed: {elapsed/60:6.1f}m "
+        f"| ETA: {remaining/60:6.1f}m"
+    )
+    sys.stdout.flush()
+
 
 results = []
 
-for Q in Q_values:
-    for B in B_values:
-        print(f"=== Building Q={Q}, B={B} ===")
-        subprocess.run(["make", "clean"])
-        subprocess.run(["make", f"Q={Q}", f"B={B}"])
+for N in inputs:
+    generate_input_file(N)  # only once per N
 
-        for n in inputs:
-            # run CUDA version
-            t0 = time.time()
-            output = subprocess.check_output(["./radix", str(n), "1"]).decode()
-            cuda_time = time.time() - t0
+    for Q in Q_values:
+        for B in B_values:
+            for NUM_BITS in BITS_values:
+                if (B < (1 << NUM_BITS)):
+                    print(f"\n=== {B} < {1<<NUM_BITS} --- SKIPPING ===")
+                    done += 1
+                else:
+                    print(f"\n=== N={N}, Q={Q}, B={B}, NUM_BITS={NUM_BITS} ===")
 
-            # run CUB version
-            cub_out = subprocess.check_output(["./cub_binary", str(n)]).decode()
+                    cub_t, cuda_t = run_radix(N, Q, B, NUM_BITS)  
 
-            # run Futhark version
-            futhark_out = subprocess.check_output(["./futhark_binary", str(n)]).decode()
+                    # invalid runs
+                    if cub_t == "ERR" or cuda_t == "ERR":
+                        print("❌ CUDA SORT ID NOT VALIDATE")
+                        continue
 
-            results.append([Q, B, n, cuda_time, cub_out.strip(), futhark_out.strip()])
+                    futhark_t = run_futhark()
 
-            print(f"Q={Q}, B={B}, N={n}, CUDA={cuda_time:.5f}s")
+                    print(f"✅ CUB={cub_t}µs  CUDA={cuda_t}µs  Futhark={futhark_t}µs")
 
-# Save CSV
+                    results.append([N, Q, B, cub_t, cuda_t, futhark_t])
+                    done += 1
+                    print_status()
+
+
+# Write results
 with open("results.csv", "w", newline="") as f:
     writer = csv.writer(f)
-    writer.writerow(["Q", "B", "N", "CUDA(s)", "CUB", "Futhark"])
+    writer.writerow(["N", "Q", "B", "Cub (µs)", "CUDA (µs)", "Futhark (µs)"])
     writer.writerows(results)
 
-print("✅ Benchmark complete. Results in results.csv")
+print("\n✅ Benchmark complete — results saved to results.csv")
