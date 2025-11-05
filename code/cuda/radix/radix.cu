@@ -12,7 +12,7 @@
 
 #define NUM_BITS 8        // number of bits processed per pass
 #define H (1 << NUM_BITS) // histogram size or amount of numbers you can make with NUM_BITS bits
-#define Q 22              // amount of elements each thread processes
+#define Q 23              // amount of elements each thread processes
 #define B 256             // block size
 
 #include "kernels.cuh"
