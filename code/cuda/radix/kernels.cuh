@@ -59,27 +59,13 @@ coalsTransposeKer(uint32_t* A, uint32_t* C, int heightA, int widthA) {
       C[y*heightA + x] = tile[threadIdx.x][threadIdx.y];
 }
 
-// Temporary fix to make scan exclusive and not inclusive 
-__global__ void
-shiftKer(uint32_t* input
-                        , uint32_t* output
-                        , uint32_t N
-) {
-  // Global thread ID
+
+__global__ void createFlagKer(char* d_out, const size_t N) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
-
   if (tid < N) {
-
-    // Creates a copy of the input array shifted one element
-    if (tid > 0) {
-      output[tid] = input[tid-1];
-    }
-    else {
-      output[tid] = 0;
-    }
-  }
+    d_out[tid] = tid % H == 0;
+  } 
 }
-
 
 // Last kernel 
 __global__ void scatterKer(uint32_t* input,
