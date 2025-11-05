@@ -11,7 +11,7 @@ BITS_values = [2, 4, 8]
 
 CUDA_RADIX_DIR = "../../code/cuda/radix/"
 FUTHARK_DIR = "../futhark"
-TXT_OUTFILE = "../input.txt"
+TXT_OUTFILE = "../cuda/radix/input.txt"
 IN_OUTFILE = "../futhark/input.in"
 
 ### Create a .txt and .in based on N ####################

@@ -79,7 +79,7 @@ int main(int argc, char** argv) {
     uint32_t* h_out_ref = (uint32_t*) malloc(mem_size);
 
     // initialize the memory
-    if (useFile) getInputFromFile("../../input.txt", h_in, N);
+    if (useFile) getInputFromFile("input.txt", h_in, N);
     else generateRandomInput(h_in, N);
 
     // print input array for debugging
