@@ -67,7 +67,7 @@ __global__ void createFlagKer(char* d_out, const size_t N) {
   } 
 }
 
-// Last kernel 
+// Partition and scatter kernel 
 __global__ void scatterKer(uint32_t* input,
                            uint32_t* histogram_scan,
                            uint32_t* histogram_sgm_scan,
@@ -91,9 +91,6 @@ __global__ void scatterKer(uint32_t* input,
     if (idx < N) {
       elms[q + thread_offset] = input[idx];
     }
-    else {
-      elms[q + thread_offset] = 0xFFFFFFFF; // Max value so goes to last bucket
-    }
   }
 
   __syncthreads();
@@ -102,17 +99,12 @@ __global__ void scatterKer(uint32_t* input,
   for (int b = 0; b < bits; b++){
     uint32_t sum = 0;
     
-    for (int q = 0; q < Q; q++) {
+    for (int q = thread_offset; q < thread_offset + Q; q++) {
       // Adds one to the sum if bit is zero
-      //if ((elms[q + thread_offset] & (1 << (b + shift))) == 0) {
-      //  sum += 1;
-      //}
-      uint32_t idx = q + block_start + thread_offset;
+      uint32_t idx = block_start + q;
       // Only count if within bounds
       if (idx < N) {
-        if ((elms[q + thread_offset] & (1 << (b + shift))) == 0) {
-          sum += 1;
-        }
+          sum += ((elms[q] & (1 << (b + shift))) == 0);
       }
     }
 
@@ -121,13 +113,8 @@ __global__ void scatterKer(uint32_t* input,
 
 
     __syncthreads();
-    // histogram_block_scan[1] += histogram_block_scan[0];
-    // histogram_block_scan[2] += histogram_block_scan[1];
-    // histogram_block_scan[3] += histogram_block_scan[2];
 
-    // ------------------------------
-    // Scan excl block
-    
+    // Scan excl block    
     int offset = 1;
     // Up-sweep (reduce) phase
     for (int d = B >> 1; d > 0; d >>= 1) {
@@ -158,8 +145,6 @@ __global__ void scatterKer(uint32_t* input,
     __syncthreads();
     // Turn exclusive scan inclusive by adding all elements (not pretty)
     histogram_block_scan[ threadIdx.x] += histogram_block[ threadIdx.x];
-
-    // ------------------------------
 
     __syncthreads();
 

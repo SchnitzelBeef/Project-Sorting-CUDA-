@@ -55,7 +55,6 @@ int main(int argc, char** argv) {
     unsigned int numblocks = (N + (Q * B - 1)) / (Q * B);
     uint32_t mem_size = N * sizeof(uint32_t);
     uint32_t hist_mem_size = numblocks * H * sizeof(uint32_t);
-    uint32_t hist_size = numblocks * H;
     printf("N is: %d\n", N);
     printf("Pred. Q: %d\n", Q);
     printf("Pred. B: %d\n", B);
@@ -64,8 +63,8 @@ int main(int argc, char** argv) {
     printf("Num blocks: ceil(N / Q*B) = %d\n", numblocks);
     printf("H (RADIX): 2 ** b = %d\n", H);
     printf("====\n");
-    printf("Memory size: %d\n", mem_size);
-    printf("Histogram memory size: %d\n", hist_mem_size);
+    printf("Memory size (bytes): %d\n", mem_size);
+    printf("Histogram memory size (bytes): %d\n", hist_mem_size);
     printf("====\n");
 
     // allocate host memory for both CPU and GPU
@@ -209,6 +208,7 @@ int main(int argc, char** argv) {
                 printVerbose(d_hist, d_hist_scan, d_hist_sgm_scan, h_gpu_res, h_out, N, numblocks, hist_mem_size);
             }
         }
+        cudaDeviceSynchronize();
         gettimeofday(&t_end, NULL);
         timeval_subtract(&t_diff, &t_end, &t_start);
         elapsed_cuda += (t_diff.tv_sec*1e6+t_diff.tv_usec);
@@ -237,6 +237,7 @@ int main(int argc, char** argv) {
     // Timings
     printf("CUB Radix Sort Time (maybe correct): %lu microseconds\n", elapsed_cub);
     printf("CUDA Radix Sort Time: %lu microseconds\n", elapsed_cuda);   
+    printf("CUB speed is CUDA / CUB = %f times faster\n", (double)elapsed_cuda/elapsed_cub);   
     printf("====\n");
     
     // clean-up memory
