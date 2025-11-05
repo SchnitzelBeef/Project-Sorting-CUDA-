@@ -138,13 +138,16 @@ int main(int argc, char** argv) {
     unsigned int mask;
     uint32_t shift;
 
-    //a small number of dry runs
-    // printf("==== DRY RUNS ====== \n");
-    // for(int r = 0; r < 100; r++) {
-    //     mask = (1 << NUM_BITS) - 1; // 4 bits = 0xF for radix 16
-    //     shift = r * NUM_BITS;
-    //     histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, shift, N);
-    // }
+    // dry run to exercise device allocations
+    printf("==== DRY RUN ====== \n");
+    { // dry run to manifest the allocations in memory
+        histogramKer<<<numblocks, B>>>(d_in, d_hist, 0, 0, N);
+        sgmScanInc< Add<uint32_t> >( B, numblocks * H, d_hist_sgm_scan, d_flags, d_hist, d_tmp_vals, d_tmp_flag);
+        callTransposeKer<32>(d_hist, d_hist_T, numblocks, H);
+        scanInc<Add<uint32_t>> ( B, numblocks * H, d_hist_T, d_hist_T, d_tmp_vals);
+        callTransposeKer<32>(d_hist_T, d_hist_scan, H, numblocks);
+        scatterKer<<<numblocks, B>>>(d_in, d_hist_scan, d_hist_sgm_scan, d_out, N, NUM_BITS, shift);
+    }
 
     struct timeval t_start, t_end, t_diff;
 
