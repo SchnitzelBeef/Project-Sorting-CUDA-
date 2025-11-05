@@ -240,7 +240,7 @@ int main(int argc, char** argv) {
     if (!validateExact(h_out, h_out_ref, N)) return 4;
 
     // Timings
-    printf("CUB Radix Sort Time (maybe correct): %lu microseconds\n", elapsed_cub);
+    printf("CUB Radix Sort Time : %lu microseconds\n", elapsed_cub);
     printf("CUDA Radix Sort Time: %lu microseconds\n", elapsed_cuda);   
     printf("Speedup: CUDA / CUB = %f times faster\n", (double)elapsed_cuda/elapsed_cub);    
     printf("====\n");

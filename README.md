@@ -11,7 +11,7 @@ You can validate the program by running `make`, which will compile and execute t
 
 ### Using a Custom Input
 
-To use your own input, ensure it is formatted as a Futhark array of unsigned 32-bit integers, with each element suffixed by `u32`. Save this array to a file named `input.txt` inside the `/code/cuda/radix` directory, replacing the existing array definition and execute:
+To use your own input, ensure it is formatted as a Futhark array of unsigned 32-bit integers, with each element suffixed by `u32`. Save this array in a file named `input.txt` located in the same directory as the compiled program. Then, execute:
 
 ```
 ./radix N 1
