@@ -55,6 +55,7 @@ int main(int argc, char** argv) {
     unsigned int numblocks = (N + (Q * B - 1)) / (Q * B);
     uint32_t mem_size = N * sizeof(uint32_t);
     uint32_t hist_mem_size = numblocks * H * sizeof(uint32_t);
+    uint32_t hist_size = numblocks * H;
     printf("N is: %d\n", N);
     printf("Pred. Q: %d\n", Q);
     printf("Pred. B: %d\n", B);
@@ -116,6 +117,12 @@ int main(int argc, char** argv) {
     cudaMalloc((void**)&d_tmp_vals, MAX_BLOCK*sizeof(int)); // memory used for scan and sgm scan
     cudaMalloc((void**)&d_tmp_flag, MAX_BLOCK*sizeof(char)); // memory used for flag array in sgm scan
 
+    // DEBUG BUFFER TO BE REMOVEDE
+    uint32_t* d_debug_pos;
+    cudaMalloc(&d_debug_pos, N * sizeof(uint32_t));
+    cudaMemset(d_debug_pos, 0, N * sizeof(uint32_t));
+    // END DEBUG BUFFER
+
     // copy host memory to device
     cudaMemcpy(d_in, h_in, mem_size, cudaMemcpyHostToDevice);
     cudaMemset(d_out, 0, mem_size);
@@ -126,7 +133,6 @@ int main(int argc, char** argv) {
     
     const int W = sizeof(int) * 8; 
     const int num_passes = (W + NUM_BITS - 1) / NUM_BITS;
-    unsigned int mask;
     uint32_t shift;
 
     // dry run to exercise device allocations
@@ -378,9 +384,9 @@ void printVerbose(uint32_t* d_hist, uint32_t* d_hist_scan, uint32_t* d_hist_sgm_
 void generateRandomInput(uint32_t* h_in, const uint32_t N) {
     srand(time(NULL));
     if (VERBOSE) {
-        printf("Input:\n");
-        binaryPrinter(h_in[0], NUM_BITS);
-        printf(", ");
+        // printf("Input:\n");
+        // binaryPrinter(h_in[0], NUM_BITS);
+        // printf(", ");
     }
     for(unsigned int i=0; i<N; ++i) {
         // Chaining 4 rands to get 32-bit integer.

@@ -3,7 +3,6 @@
 __global__ void
 histogramKer( uint32_t* input
             , uint32_t* histogram // Global set of histograms
-            , uint32_t mask
             , uint32_t shift
             , uint32_t N
 ) {
@@ -22,10 +21,11 @@ histogramKer( uint32_t* input
   uint32_t block_start = blockIdx.x * (blockDim.x * Q);
   for (uint32_t i = 0; i < Q; i++) {
       uint32_t idx = block_start + threadIdx.x + (i * blockDim.x);
-      if (idx >= N) break;
-      uint32_t curr_val = input[idx];
-      uint32_t bucket = (curr_val >> shift) & ((1 << NUM_BITS) - 1);
-      atomicAdd(&sh_hist[bucket], 1);
+      if (idx < N) {
+        uint32_t curr_val = input[idx];
+        uint32_t bucket = (curr_val >> shift) & ((1 << NUM_BITS) - 1);
+        atomicAdd(&sh_hist[bucket], 1);
+      }
   }
 
   __syncthreads();
@@ -77,8 +77,6 @@ __global__ void scatterKer(uint32_t* input,
                            const size_t shift) {
 
   // Local shared histogram across the block
-  // USES STATIC MEMORY SO ONLY WORKS WHEN HARDCODED Q = 4 and B = 2
-
   __shared__ uint32_t elms[Q*B];
   __shared__ uint32_t elms_shared[Q*B];
   __shared__ uint32_t histogram_block[B];
@@ -157,35 +155,6 @@ __global__ void scatterKer(uint32_t* input,
         }
     }
 
-    // Up sweep: (4 := B)
-    // for (int d = 0; d <= 4; d = 1 << d) { //change 2 to log og B
-    //   // Can maybe make this loop go with one less iteration because last iteration is overwritten in line below
-    //   if (( threadIdx.x + 1) % d == 0) {
-    //     // Entered first only by thread 1, 3, 5, ...
-    //     // Then by 3, 7, 11, ... in the second iteration of the loop
-    //     int half_index = (( threadIdx.x + 1) >> 1) - 1;
-    //     int tmp = histogram_block_scan[ threadIdx.x];
-    //     histogram_block_scan[ threadIdx.x] = tmp + histogram_block_scan[half_index];
-    //   }
-    //   __syncthreads();
-
-    // }
-    // histogram_block_scan[ blockDim.x - 1] = 0;
-    // __syncthreads();
-
-    // // Down sweep: (4 := B)
-    // for (int d = 2-1; d >= 0; d = d >> 1) {
-    //   if (( threadIdx.x + 1) % (1 << (d + 1)) == 0) {
-    //     int half_index = (( threadIdx.x + 1) >> 1) - 1;
-    //     uint32_t tmp = histogram_block_scan[half_index];
-    //     int tmp2 = histogram_block_scan[ threadIdx.x];
-    //     histogram_block_scan[half_index] = histogram_block_scan[ threadIdx.x];
-    //     histogram_block_scan[ threadIdx.x] = tmp + tmp2;
-    //   }
-    //   __syncthreads();
-
-    // }
-
     __syncthreads();
     // Turn exclusive scan inclusive by adding all elements (not pretty)
     histogram_block_scan[ threadIdx.x] += histogram_block[ threadIdx.x];
@@ -228,16 +197,6 @@ __global__ void scatterKer(uint32_t* input,
     __syncthreads();
     
   }
-  
-  // for (int q = 0; q < Q; q++) {
-  //   uint32_t idx = q + block_start + thread_offset;
-  //   if (idx < N) {
-  //     int bucket = (elms[q + thread_offset] >> shift) & ((1 << NUM_BITS) - 1);
-  //     int pos = histogram_scan[H * blockIdx.x + bucket] - histogram_sgm_scan[H * blockIdx.x + bucket] + thread_offset + q;
-  //     output[idx] = histogram_scan[H * blockIdx.x + bucket] - histogram_sgm_scan[H * blockIdx.x + bucket] + thread_offset + q; //elms[q + thread_offset];
-  //   }
-  // }
-  // return;
 
   // Scatter
   for (int q = thread_offset; q < thread_offset + Q; q++) {
