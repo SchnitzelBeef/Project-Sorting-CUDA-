@@ -63,6 +63,40 @@ __global__ void createFlagKer(char* d_out, const size_t N) {
   if (tid < N) d_out[tid] = tid % H == 0;
 }
 
+__device__ void scanIncOnBlock(uint32_t* arr, uint32_t val, const size_t size) {
+  // Scan excl block    
+  int offset = 1;
+  // Up sweep in logB steps
+  for (int d = size >> 1; d > 0; d >>= 1) {
+      __syncthreads();
+      if ( threadIdx.x < d)
+          arr[offset * (2 * threadIdx.x + 2) - 1] += arr[offset * (2 * threadIdx.x + 1) - 1];
+      offset <<= 1;
+  }
+
+  // Clear the last element for exclusive scan
+  if ( threadIdx.x == 0)
+      arr[size - 1] = 0;
+
+  // Down sweep in logB steps
+  for (int d = 1; d < size; d *= 2) {
+      offset >>= 1;
+      __syncthreads();
+      if ( threadIdx.x < d) {
+          int ai = offset * (2 * threadIdx.x + 1) - 1;
+          int bi = offset * (2 * threadIdx.x + 2) - 1;
+          int t = arr[ai];
+          arr[ai] = arr[bi];
+          arr[bi] += t;
+      }
+  }
+
+  __syncthreads();
+  // Turn exclusive scan inclusive by adding all elements (not pretty)
+  arr[ threadIdx.x] += val;
+  __syncthreads();
+}
+
 // Partition and scatter kernel 
 __global__ void scatterKer(uint32_t* input,
                            uint32_t* histogram_scan,
@@ -76,7 +110,6 @@ __global__ void scatterKer(uint32_t* input,
   __shared__ uint32_t elms[Q*B];
   __shared__ uint32_t elms_shared[Q*B];
   __shared__ uint32_t histogram_block[B];
-  __shared__ uint32_t histogram_block_scan[B];
 
   uint32_t block_start = blockIdx.x * (Q * blockDim.x);
   uint32_t thread_offset = Q * threadIdx.x;
@@ -103,44 +136,12 @@ __global__ void scatterKer(uint32_t* input,
     }
 
     histogram_block[ threadIdx.x] = sum;
-    histogram_block_scan[ threadIdx.x] = sum; 
     
-    // Scan excl block    
-    int offset = 1;
-    // Up sweep in logB steps
-    for (int d = B >> 1; d > 0; d >>= 1) {
-        __syncthreads();
-        if ( threadIdx.x < d)
-            histogram_block_scan[offset * (2 * threadIdx.x + 2) - 1] += histogram_block_scan[offset * (2 * threadIdx.x + 1) - 1];
-        offset <<= 1;
-    }
+    scanIncOnBlock(histogram_block, sum, B);
 
-    // Clear the last element for exclusive scan
-    if ( threadIdx.x == 0)
-        histogram_block_scan[B - 1] = 0;
-
-    // Down sweep in logB steps
-    for (int d = 1; d < B; d *= 2) {
-        offset >>= 1;
-        __syncthreads();
-        if ( threadIdx.x < d) {
-            int ai = offset * (2 * threadIdx.x + 1) - 1;
-            int bi = offset * (2 * threadIdx.x + 2) - 1;
-            int t = histogram_block_scan[ai];
-            histogram_block_scan[ai] = histogram_block_scan[bi];
-            histogram_block_scan[bi] += t;
-        }
-    }
-
-    __syncthreads();
-    // Turn exclusive scan inclusive by adding all elements (not pretty)
-    histogram_block_scan[ threadIdx.x] += histogram_block[ threadIdx.x];
-
-    __syncthreads();
-
-    int splitpoint = histogram_block_scan[ blockDim.x - 1];
+    int splitpoint = histogram_block[ blockDim.x - 1];
     if ( threadIdx.x == 0) sum = 0;
-    else sum = histogram_block_scan[ threadIdx.x - 1];
+    else sum = histogram_block[ threadIdx.x - 1];
     
     for (int q = 0; q < Q; q++) {
       // Adds one to the sum if bit is zero
