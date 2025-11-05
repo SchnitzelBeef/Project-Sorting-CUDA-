@@ -6,7 +6,7 @@ import time, sys
 
 Q_values = [1, 16, 23]
 B_values = [64, 128, 256]
-inputs = [1000, 10000, 1000000]
+inputs = [1000, 10000, 1000000, 10000000]
 BITS_values = [2, 4, 8]
 
 CUDA_RADIX_DIR = "../../code/cuda/radix/"
