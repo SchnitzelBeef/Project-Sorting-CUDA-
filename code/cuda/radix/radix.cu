@@ -12,8 +12,8 @@
 #define H (1 << NUM_BITS) // histogram size or amount of numbers you can make with NUM_BITS bits
 #define VERBOSE false
 
-#define Q 22
-#define B 256
+const int Q = RADIX_Q;
+const int B = RADIX_B;
 
 #include "kernels.cuh"
 
