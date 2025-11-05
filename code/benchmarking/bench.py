@@ -4,9 +4,9 @@ import subprocess
 import csv
 import time, sys
 
-Q_values = [1, 4, 8, 16, 23, 32]
-B_values = [16, 32, 64, 128, 256]
-inputs = [1000, 1000000, 1000000000]
+Q_values = [1, 16, 23]
+B_values = [64, 128, 256]
+inputs = [1000, 10000, 1000000]
 BITS_values = [2, 4, 8]
 
 CUDA_RADIX_DIR = "../../code/cuda/radix/"
@@ -119,17 +119,17 @@ for N in inputs:
     for Q in Q_values:
         for B in B_values:
             for NUM_BITS in BITS_values:
+                print(f"\n=== N={N}, Q={Q}, B={B}, NUM_BITS={NUM_BITS} ===")
+
                 if (B < (1 << NUM_BITS)):
-                    print(f"\n=== {B} < {1<<NUM_BITS} --- SKIPPING ===")
+                    print(f"➡️  SKIPPING because {B} < {1<<NUM_BITS}")
                     done += 1
                 else:
-                    print(f"\n=== N={N}, Q={Q}, B={B}, NUM_BITS={NUM_BITS} ===")
-
                     cub_t, cuda_t = run_radix(N, Q, B, NUM_BITS)  
 
                     # invalid runs
                     if cub_t == "ERR" or cuda_t == "ERR":
-                        print("❌ CUDA SORT ID NOT VALIDATE")
+                        print("❌ CUDA SORT DID NOT VALIDATE")
                         continue
 
                     print(f"✅ CUB={cub_t}µs  CUDA={cuda_t}µs  Futhark={futhark_t}µs")
@@ -145,4 +145,4 @@ with open("results.csv", "w", newline="") as f:
     writer.writerow(["N", "Q", "B", "Cub (µs)", "CUDA (µs)", "Futhark (µs)"])
     writer.writerows(results)
 
-print("\n✅ Benchmark complete — results saved to results.csv")
+print("\n🛺 Benchmark complete — results saved to results.csv")
