@@ -7,25 +7,19 @@
 #include "host_skel.cuh"
 #include "helper.h"
 
-#define GPU_RUNS 1
-#define NUM_BITS 4 // number of bits processed per pass
+#define GPU_RUNS 300
+#define NUM_BITS 8 // number of bits processed per pass
 #define H (1 << NUM_BITS) // histogram size or amount of numbers you can make with NUM_BITS bits
 #define VERBOSE false
 
-#define Q 3
-#define B 16
+#define Q 22
+#define B 256
 
 #include "kernels.cuh"
 
 //void handleArguments(int argc, char** argv, uint32_t& N, uint32_t& Q, uint32_t& B, uint32_t& NUM_BITS, uint32_t& useFile);
 
-void cubRadixSort(uint32_t* d_in, uint32_t* d_out, size_t N, timeval& t_start, timeval& t_end);
-
-// void scanExcAddI32(const size_t N, uint32_t* d_in, uint32_t* d_out);
-
-void scanIncAddI32(const size_t hist_size, uint32_t* d_in, uint32_t* d_out);
-
-void sgmScanIncAddI32(const size_t hist_size, uint32_t* d_inp, char* d_flags, uint32_t* d_out);
+void cubRadixSort(cub::DoubleBuffer<uint32_t>& d_keys, size_t N, timeval& t_start, timeval& t_end);
 
 template<int T>
 void callTransposeKer(uint32_t* inp_d, uint32_t* out_d, const uint32_t height, const uint32_t width);
@@ -36,13 +30,13 @@ void generateRandomInput(uint32_t* h_in, const uint32_t N);
 
 void copyvals(uint32_t* dest, uint32_t* src, const uint32_t N);
 
-void printVerbose(uint32_t* d_hist, uint32_t* d_hist_scan, uint32_t* gpu_res, uint32_t* h_out, uint32_t N, unsigned int numblocks, uint32_t hist_mem_size);
+void printVerbose(uint32_t* d_hist, uint32_t* d_hist_scan, uint32_t* d_hist_sgm_scan, uint32_t* gpu_res, uint32_t* h_out, uint32_t N, unsigned int numblocks, uint32_t hist_mem_size);
 
 void handleArguments(int argc, char** argv, uint32_t& N, uint32_t& useFile);
 
 void binaryPrinter(int val, unsigned int decimal_points);
 
-int validate(uint32_t* h_out, uint32_t* h_out_ref, const uint32_t N);
+int comp(const void *a, const void *b);
 
 int main(int argc, char** argv) {
     // Arg1: N - number of elements (Required)
@@ -56,7 +50,7 @@ int main(int argc, char** argv) {
     initHwd();
     
     // use the first CUDA device:
-    cudaSetDevice(1);
+    cudaSetDevice(0);
     
     unsigned int numblocks = (N + (Q * B - 1)) / (Q * B);
     uint32_t mem_size = N * sizeof(uint32_t);
@@ -71,17 +65,15 @@ int main(int argc, char** argv) {
     printf("H (RADIX): 2 ** b = %d\n", H);
     printf("====\n");
     printf("Memory size: %d\n", mem_size);
-    printf("Histogram size (bytes): %d\n", hist_mem_size);
+    printf("Histogram memory size: %d\n", hist_mem_size);
     printf("====\n");
 
     // allocate host memory for both CPU and GPU
     uint32_t* h_in  = (uint32_t*) malloc(mem_size);
     uint32_t* h_out = (uint32_t*) malloc(mem_size);
     uint32_t* gpu_res = (uint32_t*) malloc(hist_mem_size); // This can be removed later
-    uint32_t* h_in_ref = (uint32_t*) malloc(mem_size);
     uint32_t* h_out_ref = (uint32_t*) malloc(mem_size);
-    
-    
+
     // initialize the memory
     if (useFile) {
         getInputFromFile("input.txt", h_in, N);
@@ -89,13 +81,17 @@ int main(int argc, char** argv) {
         generateRandomInput(h_in, N);
     }
 
-    copyvals(h_in_ref, h_in, N);
 
     // print input array
     if (VERBOSE) {
         printf("Input Array: \n");
         for (uint32_t i = 0; i < N; i++) {
             printf("%u ", h_in[i]);
+        }
+        printf("\n");
+        for (uint32_t i = 0; i < N; i++) {
+            binaryPrinter(h_in[i], NUM_BITS);       
+            printf(", ");
         }
         printf("\n");
     }
@@ -106,21 +102,20 @@ int main(int argc, char** argv) {
     uint32_t* d_hist;
     uint32_t* d_hist_scan;
     uint32_t* d_hist_sgm_scan;
-    char* d_flag;
-    uint32_t* d_tmp; //REMOVE ME later (only used for shifting)
-    uint32_t* d_in_ref;
-    uint32_t* d_out_ref;
+    char* d_flags;
     uint32_t* d_hist_T; // Transposed histogram
+    uint32_t*  d_tmp_vals; // temporary values for flag
+    char* d_tmp_flag;      // flag temporary values
+    
     cudaMalloc((void**)&d_in,  mem_size);
     cudaMalloc((void**)&d_out, mem_size);
     cudaMalloc((void**)&d_hist, hist_mem_size);
     cudaMalloc((void**)&d_hist_scan, hist_mem_size);
     cudaMalloc((void**)&d_hist_sgm_scan, hist_mem_size);
-    cudaMalloc((void**)&d_flag, N * sizeof(char));
-    cudaMalloc((void**)&d_tmp, MAX_BLOCK*sizeof(uint32_t));
-    cudaMalloc((void**)&d_in_ref,  mem_size);
-    cudaMalloc((void**)&d_out_ref, mem_size);
+    cudaMalloc((void**)&d_flags, numblocks * H * sizeof(char));
     cudaMalloc((void**)&d_hist_T, hist_mem_size);
+    cudaMalloc((void**)&d_tmp_vals, MAX_BLOCK*sizeof(int)); // memory used for scan and sgm scan
+    cudaMalloc((void**)&d_tmp_flag, MAX_BLOCK*sizeof(char)); // memory used for flag array in sgm scan
 
     // DEBUG BUFFER TO BE REMOVEDE
     uint32_t* d_debug_pos;
@@ -134,31 +129,44 @@ int main(int argc, char** argv) {
     cudaMemset(d_hist, 0, hist_mem_size);
     cudaMemset(d_hist_scan, 0, hist_mem_size);
     cudaMemset(d_hist_sgm_scan, 0, hist_mem_size);
-    cudaMemset(d_flag, 0, N * sizeof(char));
-    cudaMemcpy(d_in_ref, h_in_ref, mem_size, cudaMemcpyHostToDevice);
-    cudaMemset(d_out_ref, 0, mem_size);
+    cudaMemset(d_flags, 0, numblocks * H * sizeof(char));
     
     const int W = sizeof(int) * 8; 
     const int num_passes = (W + NUM_BITS - 1) / NUM_BITS;
     uint32_t shift;
 
-
-    //a small number of dry runs
-    printf("==== DRY RUNS ====== \n");
-    for(int r = 0; r < 100; r++) {
-        shift = r * NUM_BITS;
-        histogramKer<<<numblocks, B>>>(d_in, d_hist, shift, N);
+    // dry run to exercise device allocations
+    printf("\n==== DRY RUN ====== \n");
+    { // dry run to manifest the allocations in memory
+        histogramKer<<<numblocks, B>>>(d_in, d_hist, 0, 0, N);
+        createFlagKer<<<numblocks, B>>>(d_flags, N);
+        sgmScanInc< Add<uint32_t> >( B, numblocks * H, d_hist_sgm_scan, d_flags, d_hist, d_tmp_vals, d_tmp_flag);
+        callTransposeKer<32>(d_hist, d_hist_T, numblocks, H);
+        scanInc<Add<uint32_t>> ( B, numblocks * H, d_hist_T, d_hist_T, d_tmp_vals);
+        callTransposeKer<32>(d_hist_T, d_hist_scan, H, numblocks);
+        scatterKer<<<numblocks, B>>>(d_in, d_hist_scan, d_hist_sgm_scan, d_out, N, NUM_BITS, shift);
     }
 
     struct timeval t_start, t_end, t_diff;
-    // running Cub radix sort for reference
+
+    // running Cub radix sort for reference (DOES NOT SEEM TO WORK)
     uint64_t elapsed_cub = 0.0;
+    cub::DoubleBuffer<uint32_t> d_keys(d_in, d_out);
+    { // Dry run for CUB
+        cubRadixSort(d_keys, N, t_start, t_end);
+    }
     for (int i = 0; i < GPU_RUNS; i++) {
-        cubRadixSort(d_in_ref, d_out_ref, N, t_start, t_end);
+        cubRadixSort(d_keys, N, t_start, t_end);
         timeval_subtract(&t_diff, &t_end, &t_start);
-        elapsed_cub += (t_diff.tv_sec*1e6+t_diff.tv_usec);
+        elapsed_cub += (t_diff.tv_sec * 1e6 + t_diff.tv_usec);
     }
     elapsed_cub /= GPU_RUNS;
+    //cudaMemcpy(h_out_ref, d_keys.Current(), N * sizeof(uint32_t), cudaMemcpyDeviceToHost);
+
+
+    // Temporary qsort just so we can validate
+    memcpy(h_out_ref, h_in, N*sizeof(uint32_t));
+    qsort(h_out_ref, N, sizeof(uint32_t), comp);
 
     // timing the GPU computation
     uint64_t elapsed_cuda = 0.0;
@@ -166,74 +174,43 @@ int main(int argc, char** argv) {
     // We have B threads per block
     // Therefore (numblocks * H) / B blocks are needed
     // (Ceil division)
+    printf("==== %d GPU RUNS ====== \n", GPU_RUNS);
     for (int i = 0; i < GPU_RUNS; i++) {
         cudaMemcpy(d_in, h_in, mem_size, cudaMemcpyHostToDevice);
         cudaMemset(d_out, 0, mem_size);
         cudaMemset(d_hist, 0, hist_mem_size);
         cudaMemset(d_hist_scan, 0, hist_mem_size);
         cudaMemset(d_hist_sgm_scan, 0, hist_mem_size);
-        cudaMemset(d_flag, 0, N * sizeof(char));
+        mask = (1 << NUM_BITS) - 1; // 4 bits = 0xF for radix 16
         gettimeofday(&t_start, NULL);
 
-        for (int r = 0; r < num_passes; r++) { 
+        for (int r = 0; r < num_passes; r++) { //num_passes
             shift = r * NUM_BITS;
 
-            histogramKer<<<numblocks, B>>>(d_in, d_hist, shift, N);
-            sgmScanIncAddI32(hist_size, d_hist, d_flag, d_hist_sgm_scan);
-            
+            histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, shift, N);
+        
+            createFlagKer<<<numblocks, B>>>(d_flags, N);
+            sgmScanInc< Add<uint32_t> >( B, numblocks * H, d_hist_sgm_scan, d_flags, d_hist, d_tmp_vals, d_tmp_flag);
             callTransposeKer<32>(d_hist, d_hist_T, numblocks, H);
-            scanIncAddI32(hist_size, d_hist_T, d_hist_T);
+            scanInc<Add<uint32_t>> ( B, numblocks * H, d_hist_T, d_hist_T, d_tmp_vals);
             callTransposeKer<32>(d_hist_T, d_hist_scan, H, numblocks);
-
-            // DEBUG: print histograms
-            uint32_t h_hist[H * numblocks];
-            uint32_t h_histT[H * numblocks];
-            uint32_t h_hist_scan[H * numblocks];
-
-            cudaMemcpy(h_hist, d_hist, H*numblocks*sizeof(uint32_t), cudaMemcpyDeviceToHost);
-            cudaMemcpy(h_histT, d_hist_T, H*numblocks*sizeof(uint32_t), cudaMemcpyDeviceToHost);
-            cudaMemcpy(h_hist_scan, d_hist_scan, H*numblocks*sizeof(uint32_t), cudaMemcpyDeviceToHost);
-
-            printf("\nHISTOGRAM (block-major) H=%d, blocks=%d:\n", H, numblocks);
-            for(int b=0;b<numblocks;b++){
-            for(int bin=0;bin<H;bin++){
-                printf("%u ", h_hist[b*H+bin]);
-            } printf("\n");
-            }
-
-            printf("\nHISTOGRAM TRANSPOSED (bin-major):\n");
-            for(int bin=0;bin<H;bin++){
-            for(int b=0;b<numblocks;b++){
-                printf("%u ", h_histT[bin*numblocks+b]);
-            } printf("\n");
-            }
-
-            printf("\nSCAN of transposed histogram:\n");
-            for(int bin=0;bin<H;bin++){
-            for(int b=0;b<numblocks;b++){
-                printf("%u ", h_hist_scan[bin*numblocks+b]);
-            } printf("\n");
-            }
-            // END DEBUG
-            scatterKer<<<numblocks, B>>>(d_in, d_hist_scan, d_hist_sgm_scan, d_out, N, NUM_BITS, r * NUM_BITS, d_debug_pos);
-
-            //DEBUG
-            uint32_t h_debug_pos[64];
-            cudaMemcpy(h_debug_pos, d_debug_pos, 64 * sizeof(uint32_t), cudaMemcpyDeviceToHost);
-
-            printf("i\tvalue\t\tbucket\tpos\n");
-            for(int i = 0; i < 64; i++){
-                uint32_t val = h_in[i];
-                uint32_t bucket = (val >> shift) & ((1 << NUM_BITS) - 1);
-                printf("%d\t%u\t%u\t%u\n", i, val, bucket, h_debug_pos[i]);
-            }
-            // END DEBUG
-
-
+            scatterKer<<<numblocks, B>>>(d_in, d_hist_scan, d_hist_sgm_scan, d_out, N, NUM_BITS, shift);
+            
             // swap input and output arrays
-            // uint32_t* temp = d_in;
-            // d_in = d_out;
-            // d_out = temp;
+            uint32_t* temp = d_in;
+            d_in = d_out;
+            d_out = temp;
+            
+            if (VERBOSE) {
+                printf("\n----- Iteration: %d -----", r+1);
+                cudaMemcpy(h_out, d_in, mem_size, cudaMemcpyDeviceToHost);
+                printVerbose(d_hist, d_hist_scan, d_hist_sgm_scan, gpu_res, h_out, N, numblocks, hist_mem_size);
+                
+                // for (int i = 0; i<N; i++) {
+                //     printf("%u - %u", h_out[i], h_out_ref[i]);
+                //     printf("\n");
+                // }
+            }
         }
         gettimeofday(&t_end, NULL);
         timeval_subtract(&t_diff, &t_end, &t_start);
@@ -241,44 +218,39 @@ int main(int argc, char** argv) {
     }
     elapsed_cuda /= GPU_RUNS;
     
-        
+    
     // check for errors
     gpuAssert( cudaPeekAtLastError() );
-
+    
     // Copying sorted array back to host
     cudaMemcpy(h_out, d_in, mem_size, cudaMemcpyDeviceToHost);
-
+    
+    // Print result (REMOVE ME LATER)
     if (VERBOSE) {
-        printVerbose(d_hist, d_hist_scan, gpu_res, h_out, N, numblocks, hist_mem_size);
+        printf("\n ------- RESULTS ------- \n\nRadix - qsort \n");
+        for (int i = 0; i < N; i++) {
+            printf("%10u - %10u", h_out[i], h_out_ref[i]);
+            printf("\n");
+        }    
     }
     
+    printf("Against qsort: ");
+    if (!validateExact(h_out, h_out_ref, N)) return 4;
 
-    // Verify correctness against Cub result
-    cudaMemcpy(h_out_ref, d_out_ref, mem_size, cudaMemcpyDeviceToHost);
+    // if (validated) {
+    //     printf("\nVALIDATED: Result matches CUB result\n");
+    // } else {
+    //     printf("\nDID NOT VALIDATE: Result dont match CUB result!\nEXITING!\n");
+    //     validated = validate(h_in, h_out_ref, N);
+    //     if (validated) {
+    //         printf("\nVALIDATED: Result matches CUB result (after even number of passes)\n"); 
+    //     } else {
+    //         printf("\nDID NOT VALIDATE: Result dont match CUB result!\nEXITING!\n");
+    //         return 4;
+    //     }
+    // }
 
-    printf("==== RESULTS ====\n");
-    for (int i = 0; i<N; i++) {
-        printf("%u ", h_out[i]);
-        printf("%u ", h_out_ref[i]);
-    }
-
-
-    bool validated = validate(h_out, h_out_ref, N);    
-
-    if (validated) {
-        printf("VALIDATED: Result matches CUB result\n");
-    } else {
-        validated = validate(h_in, h_out_ref, N);
-        if (validated) {
-            printf("VALIDATED: Result matches CUB result (after even number of passes)\n");
-        } else {
-            printf("DID NOT VALIDATE: Result dont match CUB result!\nEXITING!\n");
-            return 4;
-        }
-    }
-
-    printf("====\n");
-    printf("CUB Radix Sort Time: %lu microseconds\n", elapsed_cub);
+    printf("CUB Radix Sort Time (maybe correct): %lu microseconds\n", elapsed_cub);
     printf("CUDA Radix Sort Time: %lu microseconds\n", elapsed_cuda);   
     printf("====\n");
     
@@ -286,81 +258,28 @@ int main(int argc, char** argv) {
     free(h_in);
     free(h_out);
     free(gpu_res); 
-    free(h_in_ref);
     free(h_out_ref);
     cudaFree(d_in);
     cudaFree(d_out);
     cudaFree(d_hist);
     cudaFree(d_hist_scan);
     cudaFree(d_hist_sgm_scan);
-    cudaFree(d_flag);
-    cudaFree(d_tmp);
-    cudaFree(d_in_ref);
-    cudaFree(d_out_ref);
     cudaFree(d_hist_T);
-
-    //DEBUG BUFFER
-    cudaFree(d_debug_pos);
-
+    
+    //Free flag memory:
+    cudaFree(d_flags);
+    cudaFree(d_tmp_vals);
+    cudaFree(d_tmp_flag);
     return 0;
 }
 
-int validate(uint32_t* h_out, uint32_t* h_out_ref, const uint32_t N) {
-    for (uint32_t i = 0; i < N; i++) {
-        if (h_out[i] != h_out_ref[i]) {
-            return 0; // Not valid
-        }
-    }
-    return 1; // Valid
+// Temporary comparator function for temporary qsort
+// (overflow/underflow safe)
+int comp(const void *a, const void *b) {
+    uint32_t arg1 = *(const uint32_t*)a;
+    uint32_t arg2 = *(const uint32_t*)b;
+    return (arg1 > arg2) - (arg1 < arg2);
 }
-
-// Modified from assignment 2:
-void scanIncAddI32(const size_t hist_size, uint32_t* d_in, uint32_t* d_out) {
-    // B: Desired CUDA block size (<= 1024, multiple of 32)
-    // N: Length of the input array
-    // d_in: Device input of size: N * sizeof(uint32_t)
-    // d_out: device result of size: N * sizeof(uint32_t)
-    uint32_t* d_tmp;
-    cudaMalloc((void**)&d_tmp, MAX_BLOCK*sizeof(uint32_t));
-
-    scanInc<Add<uint32_t>> ( B, hist_size, d_out, d_in, d_tmp );
-
-    cudaFree(d_tmp);
-}
-
-// Modified from assignment 2:
-void sgmScanIncAddI32(const size_t hist_size     // length of the input array
-                    , uint32_t* d_inp           // device input  of size: N * sizeof(int)
-                    , char* d_flags             // device flag array of size: N * sizeof(int)
-                    , uint32_t* d_out           // device result of size: N * sizeof(int)
-) {
-    uint32_t*  d_tmp_vals;
-    char* d_tmp_flag;
-    char* d_inp_flag;
-    char* h_inp_flag = (char*)malloc(hist_size*sizeof(char));
-
-    cudaMalloc((void**)&d_tmp_vals, MAX_BLOCK*sizeof(int));
-    cudaMalloc((void**)&d_tmp_flag, MAX_BLOCK*sizeof(char));
-    cudaMalloc((void**)&d_inp_flag, hist_size * sizeof(char));
-    cudaMemset(d_out, 0, hist_size*sizeof(int));
-
-    for(uint32_t i = 0; i < hist_size; i++) {
-        if (i % H == 0) {
-            h_inp_flag[i] = 1;
-        } else {
-            h_inp_flag[i] = 0;
-        }
-    }
-
-    cudaMemcpy(d_flags, h_inp_flag, hist_size*sizeof(char), cudaMemcpyHostToDevice);
-    sgmScanInc< Add<uint32_t> >( B, hist_size, d_out, d_flags, d_inp, d_tmp_vals, d_tmp_flag);
-
-    free(h_inp_flag);
-    cudaFree(d_tmp_vals);
-    cudaFree(d_tmp_flag);
-    cudaFree(d_inp_flag);
-}
-
 
 void handleArguments(int argc, char** argv, uint32_t& N, uint32_t& useFile) {
     // Reading the number of elements 
@@ -420,22 +339,33 @@ void getInputFromFile(const char* filename, uint32_t* h_in, const uint32_t N) {
     }
 }
 
-void printVerbose(uint32_t* d_hist, uint32_t* d_hist_scan, uint32_t* gpu_res, uint32_t* h_out, uint32_t N, unsigned int numblocks, uint32_t hist_mem_size) {
+void printVerbose(uint32_t* d_hist, uint32_t* d_hist_scan, uint32_t* d_hist_sgm_scan, uint32_t* gpu_res, uint32_t* h_out, uint32_t N, unsigned int numblocks, uint32_t hist_mem_size) {
     cudaMemcpy(gpu_res, d_hist, hist_mem_size, cudaMemcpyDeviceToHost);
 
     // Print original histogram for debugging
-    printf("\n\n-- Original histogram (transposed) -- ");
-    for (int b = 0; b < H; b++) {
+    printf("\n\n-- Original histogram -- ");
+    for (int b = 0; b < numblocks; b++) {
         printf("\n");
-        for (int i = 0; i < numblocks; i++) {
-            printf("%u ", gpu_res[b * numblocks + i]);
+        for (int i = 0; i < H; i++) {
+            printf("%u ", gpu_res[b * H + i]);
         }
     }
 
     cudaMemcpy(gpu_res, d_hist_scan, hist_mem_size, cudaMemcpyDeviceToHost);
     
     // Print scanned histogram for debugging
-    printf("\n\n-- Scanned histogram -- ");
+    printf("\n\n-- Scanned (transposed) histogram -- ");
+    for (int b = 0; b < numblocks; b++) {
+        printf("\n");
+        for (int i = 0; i < H; i++) {
+            printf("%u ", gpu_res[b * H + i]);
+        }
+    }
+
+    cudaMemcpy(gpu_res, d_hist_sgm_scan, hist_mem_size, cudaMemcpyDeviceToHost);
+
+    // Print histogram individual scan
+    printf("\n\n-- Scanned individual histogram -- ");
     for (int b = 0; b < numblocks; b++) {
         printf("\n");
         for (int i = 0; i < H; i++) {
@@ -444,10 +374,11 @@ void printVerbose(uint32_t* d_hist, uint32_t* d_hist_scan, uint32_t* gpu_res, ui
     }
 
     // Print result array
-    printf("\n\n-- Result -- ");
+    printf("\n\n-- Result -- \n");
     for (int i = 0; i < N; i++) {
         printf("%u ", h_out[i]);
     }
+    printf("\n");
 }
 
 void generateRandomInput(uint32_t* h_in, const uint32_t N) {
@@ -479,16 +410,17 @@ void copyvals(uint32_t* dest, uint32_t* src, const uint32_t N) {
 // Taken from CUB library examples
 // https://nvidia.github.io/cccl/cub/api/structcub_1_1DeviceRadixSort.html
 
-void cubRadixSort(uint32_t* d_in, uint32_t* d_out, size_t N, timeval& t_start, timeval& t_end) {
+void cubRadixSort(cub::DoubleBuffer<uint32_t>& d_keys, size_t N, timeval& t_start, timeval& t_end) {
+
     //temporary storage
     void     *d_temp_storage = NULL;
     size_t   temp_storage_bytes = 0;
-    cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, d_in, d_out, N);
+    cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, d_keys, N);
     cudaMalloc(&d_temp_storage, temp_storage_bytes);
 
     // sorting operation
     gettimeofday(&t_start, NULL);
-    cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, d_in, d_out, N);
+    cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, d_keys, N);
     cudaDeviceSynchronize();
     gettimeofday(&t_end, NULL);
 

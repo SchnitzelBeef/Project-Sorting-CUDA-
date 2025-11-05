@@ -59,27 +59,13 @@ coalsTransposeKer(uint32_t* A, uint32_t* C, int heightA, int widthA) {
       C[y*heightA + x] = tile[threadIdx.x][threadIdx.y];
 }
 
-// Temporary fix to make scan exclusive and not inclusive 
-__global__ void
-shiftKer(uint32_t* input
-                        , uint32_t* output
-                        , uint32_t N
-) {
-  // Global thread ID
+
+__global__ void createFlagKer(char* d_out, const size_t N) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
-
   if (tid < N) {
-
-    // Creates a copy of the input array shifted one element
-    if (tid > 0) {
-      output[tid] = input[tid-1];
-    }
-    else {
-      output[tid] = 0;
-    }
-  }
+    d_out[tid] = tid % H == 0;
+  } 
 }
-
 
 // Last kernel 
 __global__ void scatterKer(uint32_t* input,
@@ -88,9 +74,7 @@ __global__ void scatterKer(uint32_t* input,
                            uint32_t* output,
                            const size_t N,
                            const size_t bits,
-                           const size_t start_bit,
-                           uint32_t* debug_pos // DEBUG PARAMETER TO BE REMOVED
-                           ) {
+                           const size_t shift) {
 
   // Local shared histogram across the block
   __shared__ uint32_t elms[Q*B];
@@ -107,6 +91,9 @@ __global__ void scatterKer(uint32_t* input,
     if (idx < N) {
       elms[q + thread_offset] = input[idx];
     }
+    else {
+      elms[q + thread_offset] = 0xFFFFFFFF; // Max value so goes to last bucket
+    }
   }
 
   __syncthreads();
@@ -117,8 +104,15 @@ __global__ void scatterKer(uint32_t* input,
     
     for (int q = 0; q < Q; q++) {
       // Adds one to the sum if bit is zero
-      if ((elms[q + thread_offset] & (1 << (b + start_bit))) == 0) {
-        sum += 1;
+      //if ((elms[q + thread_offset] & (1 << (b + shift))) == 0) {
+      //  sum += 1;
+      //}
+      uint32_t idx = q + block_start + thread_offset;
+      // Only count if within bounds
+      if (idx < N) {
+        if ((elms[q + thread_offset] & (1 << (b + shift))) == 0) {
+          sum += 1;
+        }
       }
     }
 
@@ -180,14 +174,18 @@ __global__ void scatterKer(uint32_t* input,
     
     
     for (int q = 0; q < Q; q++) {
-        // Adds one to the sum if bit is zero
+      // Adds one to the sum if bit is zero
+      uint32_t idx = q + block_start + thread_offset;
+      // Only count if within bounds
+      if (idx < N) {
         uint32_t elm = elms[q + thread_offset];
-        if ((elm & (1 << (b + start_bit))) == 0) {
+        if ((elm & (1 << (b + shift))) == 0) {
           sum += 1;
           elms_shared[sum - 1] = elm;
         } else {
           elms_shared[splitpoint + thread_offset + q - sum] = elm;
         } 
+      }
     }
 
     __syncthreads();
@@ -201,11 +199,13 @@ __global__ void scatterKer(uint32_t* input,
   }
 
   // Scatter
-  for (int q = 0; q < Q; q++) {
-    uint32_t bin = elms[thread_offset + q];
-    
-    //Find final position
-    int pos = histogram_scan[(1 << bits) * blockIdx.x + bin] - histogram_sgm_scan[(1 << bits) * blockIdx.x + bin] + (q + threadIdx.x * Q);
-    output[pos] = elms[thread_offset + q];
+  for (int q = thread_offset; q < thread_offset + Q; q++) {
+    int idx = q + block_start;
+    if (idx < N) {
+      int bucket = (elms[q] >> shift) & ((1 << NUM_BITS) - 1);
+      //Find final position
+      int pos = histogram_scan[H * blockIdx.x + bucket] - histogram_sgm_scan[H * blockIdx.x + bucket] + q;
+      output[pos] = elms[q];
+    }
   }
 }
