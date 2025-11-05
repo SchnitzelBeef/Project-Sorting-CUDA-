@@ -138,7 +138,7 @@ int main(int argc, char** argv) {
     // dry run to exercise device allocations
     printf("\n==== DRY RUN ====== \n");
     { // dry run to manifest the allocations in memory
-        histogramKer<<<numblocks, B>>>(d_in, d_hist, 0, 0, N);
+        histogramKer<<<numblocks, B>>>(d_in, d_hist, 0, N);
         createFlagKer<<<numblocks, B>>>(d_flags, N);
         sgmScanInc< Add<uint32_t> >( B, numblocks * H, d_hist_sgm_scan, d_flags, d_hist, d_tmp_vals, d_tmp_flag);
         callTransposeKer<32>(d_hist, d_hist_T, numblocks, H);
@@ -181,13 +181,12 @@ int main(int argc, char** argv) {
         cudaMemset(d_hist, 0, hist_mem_size);
         cudaMemset(d_hist_scan, 0, hist_mem_size);
         cudaMemset(d_hist_sgm_scan, 0, hist_mem_size);
-        mask = (1 << NUM_BITS) - 1; // 4 bits = 0xF for radix 16
         gettimeofday(&t_start, NULL);
 
         for (int r = 0; r < num_passes; r++) { //num_passes
             shift = r * NUM_BITS;
 
-            histogramKer<<<numblocks, B>>>(d_in, d_hist, mask, shift, N);
+            histogramKer<<<numblocks, B>>>(d_in, d_hist, shift, N);
         
             createFlagKer<<<numblocks, B>>>(d_flags, N);
             sgmScanInc< Add<uint32_t> >( B, numblocks * H, d_hist_sgm_scan, d_flags, d_hist, d_tmp_vals, d_tmp_flag);
