@@ -97,15 +97,14 @@ int main(int argc, char** argv) {
     }
 
     // allocate device memory
-    uint32_t* d_in;
-    uint32_t* d_out;
-    uint32_t* d_hist;
-    uint32_t* d_hist_scan;
-    uint32_t* d_hist_sgm_scan;
-    char* d_flags;
-    uint32_t* d_hist_T; // Transposed histogram
-    uint32_t*  d_tmp_vals; // temporary values for flag
-    char* d_tmp_flag;      // flag temporary values
+    uint32_t* d_in;             // input memeory
+    uint32_t* d_out;            // output memory
+    uint32_t* d_hist;           // histograms per block
+    uint32_t* d_hist_scan;      // scanned histogram global 
+    uint32_t* d_hist_sgm_scan;  // per histogram scan (also used as buffer for transposed histogram) 
+    uint32_t* d_tmp_vals;       // temporary values for flag
+    char*     d_tmp_flag;       // flag temporary values
+    char*     d_flags;          // flag array
     
     cudaMalloc((void**)&d_in,  mem_size);
     cudaMalloc((void**)&d_out, mem_size);
@@ -113,7 +112,6 @@ int main(int argc, char** argv) {
     cudaMalloc((void**)&d_hist_scan, hist_mem_size);
     cudaMalloc((void**)&d_hist_sgm_scan, hist_mem_size);
     cudaMalloc((void**)&d_flags, numblocks * H * sizeof(char));
-    cudaMalloc((void**)&d_hist_T, hist_mem_size);
     cudaMalloc((void**)&d_tmp_vals, MAX_BLOCK*sizeof(int)); // memory used for scan and sgm scan
     cudaMalloc((void**)&d_tmp_flag, MAX_BLOCK*sizeof(char)); // memory used for flag array in sgm scan
 
@@ -133,17 +131,17 @@ int main(int argc, char** argv) {
     
     const int W = sizeof(int) * 8; 
     const int num_passes = (W + NUM_BITS - 1) / NUM_BITS;
-    uint32_t shift;
+    uint32_t shift = 0;
 
     // dry run to exercise device allocations
     printf("\n==== DRY RUN ====== \n");
     { // dry run to manifest the allocations in memory
-        histogramKer<<<numblocks, B>>>(d_in, d_hist, 0, N);
+        histogramKer<<<numblocks, B>>>(d_in, d_hist, shift, N);
+        callTransposeKer<32>(d_hist, d_hist_sgm_scan, numblocks, H);
+        scanInc<Add<uint32_t>>(B, numblocks * H, d_hist_sgm_scan, d_hist_sgm_scan, d_tmp_vals);
+        callTransposeKer<32>(d_hist_sgm_scan, d_hist_scan, H, numblocks);
         createFlagKer<<<numblocks, B>>>(d_flags, N);
-        sgmScanInc< Add<uint32_t> >( B, numblocks * H, d_hist_sgm_scan, d_flags, d_hist, d_tmp_vals, d_tmp_flag);
-        callTransposeKer<32>(d_hist, d_hist_T, numblocks, H);
-        scanInc<Add<uint32_t>> ( B, numblocks * H, d_hist_T, d_hist_T, d_tmp_vals);
-        callTransposeKer<32>(d_hist_T, d_hist_scan, H, numblocks);
+        sgmScanInc<Add<uint32_t>>(B, numblocks * H, d_hist_sgm_scan, d_flags, d_hist, d_tmp_vals, d_tmp_flag);
         scatterKer<<<numblocks, B>>>(d_in, d_hist_scan, d_hist_sgm_scan, d_out, N, NUM_BITS, shift);
     }
 
@@ -183,16 +181,15 @@ int main(int argc, char** argv) {
         cudaMemset(d_hist_sgm_scan, 0, hist_mem_size);
         gettimeofday(&t_start, NULL);
 
-        for (int r = 0; r < num_passes; r++) { //num_passes
+        for (int r = 0; r < num_passes; r++) {
             shift = r * NUM_BITS;
 
             histogramKer<<<numblocks, B>>>(d_in, d_hist, shift, N);
-        
+            callTransposeKer<32>(d_hist, d_hist_sgm_scan, numblocks, H);
+            scanInc<Add<uint32_t>>(B, numblocks * H, d_hist_sgm_scan, d_hist_sgm_scan, d_tmp_vals);
+            callTransposeKer<32>(d_hist_sgm_scan, d_hist_scan, H, numblocks);
             createFlagKer<<<numblocks, B>>>(d_flags, N);
-            sgmScanInc< Add<uint32_t> >( B, numblocks * H, d_hist_sgm_scan, d_flags, d_hist, d_tmp_vals, d_tmp_flag);
-            callTransposeKer<32>(d_hist, d_hist_T, numblocks, H);
-            scanInc<Add<uint32_t>> ( B, numblocks * H, d_hist_T, d_hist_T, d_tmp_vals);
-            callTransposeKer<32>(d_hist_T, d_hist_scan, H, numblocks);
+            sgmScanInc<Add<uint32_t>>(B, numblocks * H, d_hist_sgm_scan, d_flags, d_hist, d_tmp_vals, d_tmp_flag);
             scatterKer<<<numblocks, B>>>(d_in, d_hist_scan, d_hist_sgm_scan, d_out, N, NUM_BITS, shift);
             
             // swap input and output arrays
@@ -204,11 +201,6 @@ int main(int argc, char** argv) {
                 printf("\n----- Iteration: %d -----", r+1);
                 cudaMemcpy(h_out, d_in, mem_size, cudaMemcpyDeviceToHost);
                 printVerbose(d_hist, d_hist_scan, d_hist_sgm_scan, gpu_res, h_out, N, numblocks, hist_mem_size);
-                
-                // for (int i = 0; i<N; i++) {
-                //     printf("%u - %u", h_out[i], h_out_ref[i]);
-                //     printf("\n");
-                // }
             }
         }
         gettimeofday(&t_end, NULL);
@@ -233,22 +225,11 @@ int main(int argc, char** argv) {
         }    
     }
     
+    // Validation
     printf("Against qsort: ");
     if (!validateExact(h_out, h_out_ref, N)) return 4;
 
-    // if (validated) {
-    //     printf("\nVALIDATED: Result matches CUB result\n");
-    // } else {
-    //     printf("\nDID NOT VALIDATE: Result dont match CUB result!\nEXITING!\n");
-    //     validated = validate(h_in, h_out_ref, N);
-    //     if (validated) {
-    //         printf("\nVALIDATED: Result matches CUB result (after even number of passes)\n"); 
-    //     } else {
-    //         printf("\nDID NOT VALIDATE: Result dont match CUB result!\nEXITING!\n");
-    //         return 4;
-    //     }
-    // }
-
+    // Timings
     printf("CUB Radix Sort Time (maybe correct): %lu microseconds\n", elapsed_cub);
     printf("CUDA Radix Sort Time: %lu microseconds\n", elapsed_cuda);   
     printf("====\n");
@@ -263,8 +244,7 @@ int main(int argc, char** argv) {
     cudaFree(d_hist);
     cudaFree(d_hist_scan);
     cudaFree(d_hist_sgm_scan);
-    cudaFree(d_hist_T);
-    
+
     //Free flag memory:
     cudaFree(d_flags);
     cudaFree(d_tmp_vals);
