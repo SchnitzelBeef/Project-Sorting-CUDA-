@@ -17,7 +17,7 @@ $(EXECUTABLE): $(SRC)
 
 
 run: $(EXECUTABLE)
-	./$(EXECUTABLE) 100000
+	./$(EXECUTABLE) 1000000
 
 clean:
 	rm -f $(EXECUTABLE)
