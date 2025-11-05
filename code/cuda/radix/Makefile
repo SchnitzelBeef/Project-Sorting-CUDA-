@@ -6,6 +6,7 @@ EXECUTABLE = radix
 
 RADIX_Q ?= 22
 RADIX_B ?= 256
+N ?= 100000
 
 default: compile run
 
@@ -20,7 +21,7 @@ $(EXECUTABLE): $(SRC)
 
 
 run: $(EXECUTABLE)
-	./$(EXECUTABLE) 1000
+	./$(EXECUTABLE) $(N) 1
 
 clean:
 	rm -f $(EXECUTABLE)

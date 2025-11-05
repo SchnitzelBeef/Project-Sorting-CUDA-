@@ -284,7 +284,7 @@ void handleArguments(int argc, char** argv, uint32_t& N, uint32_t& useFile) {
         exit(2);
     }
 
-    if (argc >= 2) {
+    if (argc >= 3) {
         useFile = (uint32_t)atoi(argv[2]);
     }
 }
@@ -307,26 +307,47 @@ void callTransposeKer(uint32_t* inp_d, uint32_t* out_d, const uint32_t height, c
 
 void getInputFromFile(const char* filename, uint32_t* h_in, const uint32_t N) {
     FILE* f = fopen(filename, "r");
-    if (f == NULL) {
-        printf("Error opening file %s\n", filename);
+    if (!f) {
+        printf("Error: Cannot open file %s\n", filename);
         exit(5);
     }
-    // read first '[' chararcter
-    char ch = fgetc(f);
 
-    for (uint64_t i = 0; i < N; ++i) {
-        fscanf(f, "%u", &h_in[i]);
-        // Skip 'u32'
-        fscanf(f, "%c", &ch); // 'u'
-        fscanf(f, "%c", &ch); // '3'
-        fscanf(f, "%c", &ch); // '2'
-        if (i < N - 1) {
-            // read the comma
-            fscanf(f, "%c", &ch); // ','
+    // Expect first '['
+    char ch;
+    if (fscanf(f, " %c", &ch) != 1 || ch != '[') {
+        printf("Error: Input file does not start with '['\n");
+        exit(6);
+    }
+
+    uint32_t val;
+    uint32_t count = 0;
+
+    while (count < N && fscanf(f, "%u", &val) == 1) {
+        h_in[count++] = val;
+
+        // skip 'u32'
+        fscanf(f, "%*c%*c%*c"); // skip u32
+
+        // skip optional comma
+        fscanf(f, " %c", &ch);
+        if (ch != ',') {
+            // If it's the closing bracket, stop
+            if (ch == ']') break;
+            // Otherwise put it back
+            ungetc(ch, f);
         }
     }
-    printf("Input read from file %s\n", filename);
+
+    fclose(f);
+
+    if (count < N) {
+        printf("Error: File only contained %u values, expected %u\n", count, N);
+        exit(7);
+    }
+
+    printf("Loaded %u elements from %s\n", count, filename);
 }
+
 
 void printVerbose(uint32_t* d_hist, uint32_t* d_hist_scan, uint32_t* d_hist_sgm_scan, uint32_t* h_gpu_res, uint32_t* h_out, uint32_t N, unsigned int numblocks, uint32_t hist_mem_size) {
     cudaMemcpy(h_gpu_res, d_hist, hist_mem_size, cudaMemcpyDeviceToHost);
