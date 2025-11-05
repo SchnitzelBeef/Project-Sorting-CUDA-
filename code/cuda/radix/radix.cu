@@ -12,7 +12,6 @@
 
 #define NUM_BITS 8        // number of bits processed per pass
 #define H (1 << NUM_BITS) // histogram size or amount of numbers you can make with NUM_BITS bits
-#define VERBOSE false
 
 const int Q = RADIX_Q;      // amount of elements each thread processes
 const int B = RADIX_B;      // block size
@@ -65,6 +64,8 @@ int main(int argc, char** argv) {
     printf("Num blocks: ceil(N / Q*B) = %d\n", numblocks);
     printf("H (RADIX): 2 ** b = %d\n", H);
     printf("====\n");
+    printf("Reading from file: %d\n", useFile);
+    printf("====\n");
     printf("Memory size (bytes): %d\n", mem_size);
     printf("Histogram memory size (bytes): %d\n", hist_mem_size);
     printf("====\n");
@@ -76,7 +77,7 @@ int main(int argc, char** argv) {
     uint32_t* h_out_ref = (uint32_t*) malloc(mem_size);
 
     // initialize the memory
-    if (useFile) getInputFromFile("input.txt", h_in, N);
+    if (useFile) getInputFromFile("../../input.txt", h_in, N);
     else generateRandomInput(h_in, N);
 
     // print input array for debugging
@@ -275,7 +276,7 @@ void handleArguments(int argc, char** argv, uint32_t& N, uint32_t& useFile) {
         exit(1);
     }
     
-    N = (uint32_t)atoi(argv[1]);
+    N = (uint32_t)atoi(argv[1]);    
 
     const uint32_t maxN = 500000000;
     if(N > maxN) {
@@ -284,7 +285,7 @@ void handleArguments(int argc, char** argv, uint32_t& N, uint32_t& useFile) {
     }
 
     if (argc >= 2) {
-        useFile = (uint32_t)atoi(argv[5]);
+        useFile = (uint32_t)atoi(argv[2]);
     }
 }
 
@@ -324,6 +325,7 @@ void getInputFromFile(const char* filename, uint32_t* h_in, const uint32_t N) {
             fscanf(f, "%c", &ch); // ','
         }
     }
+    printf("Input read from file %s\n", filename);
 }
 
 void printVerbose(uint32_t* d_hist, uint32_t* d_hist_scan, uint32_t* d_hist_sgm_scan, uint32_t* h_gpu_res, uint32_t* h_out, uint32_t N, unsigned int numblocks, uint32_t hist_mem_size) {
