@@ -93,12 +93,10 @@ __global__ void scatterKer(uint32_t* input,
     }
   }
 
-  __syncthreads();
-
   // Sort elements in block
   for (int b = 0; b < bits; b++){
     uint32_t sum = 0;
-    
+
     for (int q = thread_offset; q < thread_offset + Q; q++) {
       // Adds one to the sum if bit is zero
       uint32_t idx = block_start + q;
@@ -110,13 +108,10 @@ __global__ void scatterKer(uint32_t* input,
 
     histogram_block[ threadIdx.x] = sum;
     histogram_block_scan[ threadIdx.x] = sum; 
-
-
-    __syncthreads();
-
+    
     // Scan excl block    
     int offset = 1;
-    // Up-sweep (reduce) phase
+    // Up sweep
     for (int d = B >> 1; d > 0; d >>= 1) {
         __syncthreads();
         if (threadIdx.x < d)
@@ -128,14 +123,13 @@ __global__ void scatterKer(uint32_t* input,
     if (threadIdx.x == 0)
         histogram_block_scan[B - 1] = 0;
 
-    // Down-sweep phase
+    // Down sweep
     for (int d = 1; d < B; d *= 2) {
         offset >>= 1;
         __syncthreads();
         if (threadIdx.x < d) {
             int ai = offset * (2 * threadIdx.x + 1) - 1;
             int bi = offset * (2 * threadIdx.x + 2) - 1;
-
             int t = histogram_block_scan[ai];
             histogram_block_scan[ai] = histogram_block_scan[bi];
             histogram_block_scan[bi] += t;
@@ -149,14 +143,8 @@ __global__ void scatterKer(uint32_t* input,
     __syncthreads();
 
     int splitpoint = histogram_block_scan[ blockDim.x - 1];
-    if ( threadIdx.x == 0) {
-      sum = 0;
-    } else {
-      sum = histogram_block_scan[ threadIdx.x - 1];
-    }
-
-    __syncthreads();
-    
+    if ( threadIdx.x == 0) sum = 0;
+    else sum = histogram_block_scan[ threadIdx.x - 1];
     
     for (int q = 0; q < Q; q++) {
       // Adds one to the sum if bit is zero
@@ -179,8 +167,6 @@ __global__ void scatterKer(uint32_t* input,
     for (int q = 0; q < Q; q++) {
       elms[q + thread_offset] = elms_shared[q + thread_offset];
     }
-    __syncthreads();
-    
   }
 
   // Scatter
