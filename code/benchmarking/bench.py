@@ -6,7 +6,7 @@ import time, sys
 
 Q_values = [1, 4, 8, 16, 23, 32]
 B_values = [16, 32, 64, 128, 256]
-inputs = [1000, 100000, 1000000000]
+inputs = [1000, 1000000, 1000000000]
 BITS_values = [2, 4, 8]
 
 CUDA_RADIX_DIR = "../../code/cuda/radix/"
@@ -115,7 +115,7 @@ results = []
 
 for N in inputs:
     generate_input_file(N)  # only once per N
-
+    futhark_t = run_futhark()
     for Q in Q_values:
         for B in B_values:
             for NUM_BITS in BITS_values:
@@ -131,8 +131,6 @@ for N in inputs:
                     if cub_t == "ERR" or cuda_t == "ERR":
                         print("❌ CUDA SORT ID NOT VALIDATE")
                         continue
-
-                    futhark_t = run_futhark()
 
                     print(f"✅ CUB={cub_t}µs  CUDA={cuda_t}µs  Futhark={futhark_t}µs")
 
