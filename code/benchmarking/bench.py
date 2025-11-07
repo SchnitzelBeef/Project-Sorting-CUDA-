@@ -4,15 +4,15 @@ import subprocess
 import csv
 import time, sys
 
-# Q_values = [1, 16, 23]
-# B_values = [64, 128, 256]
-# inputs = [1000, 10000, 1000000, 10000000]
-# BITS_values = [2, 4, 8]
+Q_values = [4]
+B_values = [64, 128, 256]
+inputs = [1000, 10000, 1000000, 10000000]
+BITS_values = [2, 4, 8]
 
-Q_values = [23]
-B_values = [256]
-inputs = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576, 2097152, 4194304, 8388608, 16777216]
-BITS_values = [4]
+# Q_values = [23]
+# B_values = [256]
+# inputs = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576, 2097152, 4194304, 8388608, 16777216]
+# BITS_values = [4]
 
 CUDA_RADIX_DIR = "../../code/cuda/radix/"
 FUTHARK_DIR = "../futhark"
